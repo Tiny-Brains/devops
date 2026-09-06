@@ -1,0 +1,5 @@
+# Filled-in values: client secrets, session keys, database passwords.
+# The committed template is .env.example.
+.env
+.env.local
+soma/orion.local.toml

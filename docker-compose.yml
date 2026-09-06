@@ -1,0 +1,145 @@
+# TinyBrains local stack: Postgres, Soma (the Orion package), and the web shell.
+#
+# This directory is the deployment surface: compose, the environment template, the
+# database init scripts, and Soma's instance config. The application repos next to
+# it hold only what builds them -- their Dockerfile and their source.
+#
+#   cd devops
+#   cp .env.example .env     # then fill in the two GitHub values
+#   docker compose up --build
+#   open http://localhost:5173
+#
+# The web container serves the built SPA and proxies /v1 to soma, so the browser
+# only ever sees one origin. That is what lets Soma's HttpOnly session cookie work
+# and is why the port is published as 5173 -- it keeps the OAuth callback URL
+# registered with GitHub identical to the one `npm run dev` uses.
+
+name: tinybrains
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-soma}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-soma}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # Run once, on first initialisation of the volume, in filename order:
+      # create Orion's state database, apply Soma's schema, seed the one game.
+      # Re-running them means `docker compose down -v` first.
+      - ./db-init/10-orion-state.sh:/docker-entrypoint-initdb.d/10-orion-state.sh:ro
+      - ../soma/migrations/0001_init.sql:/docker-entrypoint-initdb.d/20-soma-schema.sql:ro
+      - ../soma/migrations/0002_sessions.sql:/docker-entrypoint-initdb.d/25-soma-sessions.sql:ro
+      - ./db-init/30-seed.sql:/docker-entrypoint-initdb.d/30-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soma} -d ${POSTGRES_DB:-soma}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    # Not published by default -- nothing outside the compose network needs it.
+    # Uncomment to run psql from the host.
+    # ports:
+    #   - "5432:5432"
+
+  soma:
+    build:
+      context: ../soma
+      args:
+        ORION_VERSION: ${ORION_VERSION:-1.7.0}
+    # Soma's instance config is not baked into the image -- it is deployment
+    # configuration, so it lives here; orion-server substitutes its ${NAME:-default}
+    # references from the container environment as it reads the file. One image,
+    # every environment.
+    volumes:
+      - ./soma/orion.toml.tmpl:/etc/soma/orion.toml.tmpl:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SOMA_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
+      ORION_STATE_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/orion_state
+
+      # HS256 key for the session tokens and for the sign-in channel's state cookie.
+      # Rotating it invalidates every live session and every sign-in in flight.
+      # At least 32 bytes -- oauth2_login.state_secret refuses a shorter one.
+      SOMA_SESSION_SECRET: ${SOMA_SESSION_SECRET:?set SOMA_SESSION_SECRET in .env}
+
+      # From the GitHub OAuth App. Both are referenced as env:// from the sign-in
+      # channel and resolved by the server at load; the secret never appears in a
+      # trace or a response.
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set GITHUB_CLIENT_ID in .env}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set GITHUB_CLIENT_SECRET in .env}
+
+      # Must match the OAuth App's Authorization callback URL exactly, and must be
+      # an address the *browser* can reach -- it is where GitHub sends the user
+      # back, not a container-internal name. Read by the instance config into
+      # [vars] oauth_redirect_uri, which the sign-in channel reads as var://.
+      OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github/callback}
+      APP_URL: ${APP_URL:-http://localhost:5173/}
+
+      # db:5432 resolves to a private address, which Orion's SSRF guard refuses
+      # unless the connector opts in. See soma/scripts/load-package.sh.
+      SOMA_ALLOW_PRIVATE_DB: "1"
+
+      # DEVELOPMENT ONLY. Normalised by the entrypoint and read into [vars] cookie_secure,
+      # which the state cookie and the session cookies read. The stack is served over
+      # plain http, and browsers will not store a Secure cookie from an http://
+      # origin -- which breaks sign-in in a way that looks like nothing happened: the
+      # callback completes, the user row is written, and the browser holds no
+      # session. Set this to 1 (or drop it) the moment the app is behind TLS.
+      SOMA_COOKIE_SECURE: "${SOMA_COOKIE_SECURE:-0}"
+
+      # The replay bucket is read-only and only GET /v1/matches/{id} touches it.
+      # Placeholders keep the connector from quarantining that one channel.
+      R2_ENDPOINT: ${R2_ENDPOINT:-https://example.r2.cloudflarestorage.com}
+      R2_BUCKET: ${R2_BUCKET:-soma-replays-dev}
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-placeholder}
+      R2_SECRET_KEY: ${R2_SECRET_KEY:-placeholder}
+    restart: unless-stopped
+    # Published so you can curl the API and reach the admin plane directly.
+    # The admin API is unauthenticated by default -- do not expose this port
+    # anywhere but a development machine.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  # Orion's own operations console: live dashboards, a system map of the channels
+  # and connectors, workflow DAGs, and trace drill-downs. It is not part of Soma --
+  # it reads the same admin API that soma/scripts/load-package.sh writes to. The
+  # tag tracks the server's where one exists: 1.6.0 is the newest console
+  # published and reads a 1.7.0 server fine (principal_rate_limit shows as raw
+  # config rather than a form).
+  #
+  # SECURITY: Orion's admin API is unauthenticated by default, so anyone who can
+  # reach this console can create, edit and delete channels and workflows, and fire
+  # arbitrary requests at them from its Data Console. It is published on 127.0.0.1
+  # only. Do not bind it to a routable address without turning on admin_auth.
+  orion-ui:
+    image: ghcr.io/goplasmatic/orion-ui:${ORION_UI_VERSION:-1.6.0}
+    depends_on:
+      soma:
+        condition: service_healthy
+    environment:
+      # The image's bundled nginx reverse-proxies every /api/ request here, so this
+      # is the in-network address of the server, not a browser-reachable one.
+      ORION_URL: http://soma:8080
+    # Container listens on 8080; 8081 on the host to stay clear of soma.
+    ports:
+      - "127.0.0.1:8081:8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../web
+    depends_on:
+      soma:
+        condition: service_healthy
+    # 5173 to match `npm run dev`, so one OAuth App serves both.
+    ports:
+      - "127.0.0.1:5173:80"
+    restart: unless-stopped
+
+volumes:
+  db-data:

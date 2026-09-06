@@ -1,0 +1,73 @@
+# Orion server config for Soma. Requires orion-server >= 1.7.0.
+# Copy to orion.toml and fill in. Every value here is instance config, not part of
+# the package -- channels and workflows carry no environment of their own.
+#
+# Check it before starting:  orion-server -c orion.toml validate-config
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+# Soma's channels declare route_pattern as "/v1/...". The data plane is always
+# mounted at /api/v1/data; this makes those same patterns answer at /v1/... too.
+#
+# NOTE the mount does NOT get prepended to route_pattern -- the full request path
+# is matched against the pattern, so the "/v1" prefix must appear in BOTH places.
+# A channel with route_pattern "/v1/games" then answers at:
+#     /v1/games                    (via this mount)
+#     /api/v1/data/v1/games        (canonical, always)
+data_mounts = ["/v1"]
+
+# Orion's own state: channels, workflows, connectors, traces, audit.
+# This is NOT Soma's data, though it may share the server.
+#
+# It must be durable. The default is a SQLite file in ./orion.db, which is wrong
+# on Cloudflare Containers -- disk there is ephemeral and a restart loses every
+# channel definition. Point it at Postgres.
+#
+# Since 1.6.0 this takes an env:// reference like every other value in the file,
+# so the connection string need not be written here. A literal URL, or the
+# ORION_STORAGE__URL environment override, still work.
+[storage]
+url = "env://ORION_STATE_DB_URL"
+
+# Traced, visible in responses and workflow context. Non-secret only.
+#
+# A workflow reads one as {"var": "metadata.vars.name"}; a stored channel or
+# connector config reads one as "var://name", which keeps the value's type. Soma
+# uses both: the workflows read app_url and cookie_secure, and the sign-in
+# channel reads oauth_redirect_uri and cookie_secure as var://.
+#
+# The GitHub OAuth App's credentials are not declared here. The sign-in channel
+# references the client id and secret as env://GITHUB_CLIENT_ID and
+# env://GITHUB_CLIENT_SECRET, resolved at load. Its callback URL is the var below.
+[vars]
+app_url            = "https://tinybrains.dev/"
+
+# The OAuth App's Authorization callback URL, exactly as registered with GitHub.
+# https only, except on a loopback host (orion-gaps.md N5).
+oauth_redirect_uri = "https://tinybrains.dev/v1/auth/github/callback"
+
+# Whether the session and oauth-state cookies carry Secure. Must be a TOML
+# boolean: the cookie validator refuses a string and drops the cookie (1.6.0
+# records the drop on the trace; before that it was silent). true behind TLS,
+# which is every deployed instance. Only a plain-http development stack sets
+# false, because browsers refuse to store a Secure cookie from an http:// origin.
+cookie_secure      = true
+
+# Governs the portable data dialect (data_query / data_write). Soma reaches
+# Postgres through raw db_read instead, so these do not bind its endpoints --
+# the leaderboard's own LIMIT is the ceiling that applies. Set anyway, so a
+# dialect task added later inherits sane numbers.
+[query]
+default_limit = 50
+max_limit     = 200
+
+# Trace persistence. `sync` writes the trace inside the request path -- 2.1 ms
+# median, 3.9 ms p95 on GET /v1/games on the compose stack -- and is the
+# strongest durability at a volume where the cost is nothing. `async` and `batch`
+# are safe choices too since 1.6.0, which fixed /health reporting their worker as
+# failed for the life of the process; switch if the write rate ever caps
+# throughput.
+[trace_storage]
+mode = "sync"

@@ -1,0 +1,54 @@
+# Orion server config for the Soma container. Requires orion-server >= 1.7.0.
+#
+# Every ${NAME:-default} below is substituted by orion-server from the container's
+# environment before the file is parsed -- Orion's own config syntax -- so one
+# image serves every environment and nothing is written to disk. Only non-secret
+# values are read this way: the state database URL is an env:// reference the
+# server resolves itself, and the GitHub client id and secret are referenced the
+# same way from the sign-in channel, so the file holds no credential in any form.
+#
+# It is valid TOML as it stands: `orion-server -c orion.toml.tmpl validate-config`
+# and `clippy -c` read it with the defaults applied.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+# Soma's channels declare route_pattern "/v1/...", and the full request path is
+# matched against the pattern -- so the "/v1" prefix appears in both places.
+data_mounts = ["/v1"]
+
+# Orion's own state: channels, workflows, connectors, traces. NOT Soma's data.
+# env:// here needs 1.6.0; earlier releases parsed the value as a database URL
+# and refused the scheme at boot.
+[storage]
+url = "env://ORION_STATE_DB_URL"
+
+# Instance values the package reads: the workflows as metadata.vars, the sign-in
+# channel as var://oauth_redirect_uri and var://cookie_secure. The URL defaults
+# are the localhost stack; a deployment sets the variables.
+[vars]
+app_url            = "${APP_URL:-http://localhost:5173/}"
+
+# The OAuth App's Authorization callback URL, exactly as registered with GitHub.
+# https only, except on a loopback host (orion-gaps.md N5).
+oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github/callback}"
+
+# Whether the session and oauth-state cookies carry Secure. Must substitute to a
+# bare TOML boolean; docker-entrypoint.sh normalises SOMA_COOKIE_SECURE (0/false/no
+# -> false, anything else -> true) before the server reads it. Browsers will not
+# store a Secure cookie from an http:// origin, so a plain-http stack sets false;
+# anything behind TLS must be true.
+cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
+
+[query]
+default_limit = 50
+max_limit     = 200
+
+# Trace persistence. `sync` writes the trace inside the request path -- 2.1 ms
+# median, 3.9 ms p95 on GET /v1/games on this stack -- and is the strongest
+# durability at a volume where the cost is nothing. `async` and `batch` are safe
+# choices too since 1.6.0, which fixed /health reporting their worker as failed
+# for the life of the process; switch if the write rate ever caps throughput.
+[trace_storage]
+mode = "sync"
