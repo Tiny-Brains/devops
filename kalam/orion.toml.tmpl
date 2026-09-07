@@ -1,0 +1,100 @@
+# Orion server config for a Kalam replica. Requires orion-server >= 1.7.0 -- the same version the
+# Soma package targets, because the two packages, the one schema and the one loader artifact are
+# promoted together (finding 5 B', principle 10).
+#
+# Every ${NAME:-default} below is substituted by orion-server from the container's environment
+# before the file is parsed, so one image serves every replica and nothing is written to disk.
+#
+# WHAT MAKES THIS DIFFERENT FROM SOMA'S CONFIG: a replica is disposable. Its Orion state is a local
+# SQLite file, it joins no cluster, it shares no Redis, and it holds no cron singleton that anyone
+# else depends on. It coordinates with the rest of the system in exactly one way -- by claiming
+# rows in Soma's database under a token -- and if it dies mid-wave those rows' leases lapse and
+# another replica replays them from turn zero. Nothing here needs to survive the container.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+# No data_mounts: Kalam serves no REST surface at all. It is a cron worker with an admin API, and
+# the admin API is loopback-only until admin_auth exists (tracker §12).
+
+# Orion's own state -- channels, workflows, plugins, cron occurrences, traces. A file on the
+# container's ephemeral disk, deliberately: sharing state with Soma would make a replica a cluster
+# member with a lifecycle, and the whole design is that it has neither.
+[storage]
+url = "sqlite:${KALAM_STATE_DB:-/app/state/kalam.db}"
+
+[vars]
+# The engine this replica plays, and the only rows it may claim. Equal by construction to the
+# digest of the installed cartridge plugin; the claim statement filters on it, so a replica running
+# an old engine drains its own rows across a rolling deploy and takes none of the new ones
+# (finding 5 option A). The deploy step writes the same value into games.active_engine_digest once
+# the new replicas exist, and pair stamps it on every match from then on.
+engine_digest = "${KALAM_ENGINE_DIGEST}"
+
+# --- PROVISIONAL, and blocked on measurement. These are the three numbers layer 03 owes, and the
+# wave-turn spike (kalam-gaps 0.6) is what turns them from guesses into values. They are written
+# here so the config is complete and the shape is reviewable, NOT because anyone has measured them.
+#
+# K, rows per wave per replica (decision 5). Bounded above by what a turn's wave_state costs
+# against Orion's 1 MiB plugin ceilings and by the channel timeout; bounded below by the loader's
+# economics, since one play call carries the whole wave and a wave of one wastes the batching.
+wave_size = 8
+
+# N, turns between lease renewals (decision 19). Small enough that a dead replica's rows are
+# reaped promptly, large enough that the renew statement is not most of what the wave does.
+renew_every_turns = 20
+
+# The lease, in seconds. Must comfortably exceed N turns of wall clock, or a live wave reaps
+# itself; must be short enough that a dead replica's rows do not sit unplayable for long.
+lease_secs = 120
+
+# The turn clock, enforced by the loader across adapter, inference and adapter. A seat over it is
+# reported timed_out on its row, takes the no-op and a strike, and is never retried.
+turn_ms = 250
+
+# The cap on a match's length, so a pathological pair cannot hold a wave for ever. Must stay below
+# [engine] max_loop_iterations, which bounds the workflow's loop.
+max_turns = 2000
+
+# Missed turn clocks before a seat forfeits (DESIGN.md §7). The same number Soma's [vars] carries:
+# Kalam applies it, count reads its consequences off the row.
+forfeit_strikes = 5
+
+# How often the claim channel looks for work. Decision 25, and the claim-under-load spike
+# (kalam-gaps 0.7) is what sets it: N replicas each running this statement against one partial
+# index is the database load the whole fleet shares.
+poll_secs = 2
+
+[plugins]
+# The game engine is a plugin. Off by default in Orion, so this must be present before the
+# cartridge will load -- the same lesson Soma's config records. `cache_dir` is reserved in 1.7.0
+# and a non-empty value is REFUSED at startup, so it is deliberately absent here too.
+enabled = true
+
+[plugins.trust]
+# Unlike Soma's two plugins, the cartridge is the one place a third party's code enters the
+# platform (P7 ships a second cartridge by an outsider). This list must be non-empty before that
+# happens: with keys present, an upload must carry a signature over the component digest by one of
+# them, verified again at every load. Empty until P6 mints them (tracker §12).
+public_keys = []
+
+[cron]
+# The drain window. On SIGTERM Orion stops claiming occurrences and lets the one in hand finish
+# inside this; the orchestrator's grace period must be longer still, or it kills a replica
+# mid-match and the rows go back to the queue to be replayed from turn zero. It therefore has to
+# exceed the longest match, which is max_turns * turn_ms plus the engine's own time -- a number
+# only the wave-turn spike can give. 600 is a placeholder chosen to be obviously generous.
+shutdown_timeout_secs = 600
+
+[engine]
+# Bounds the wave workflow's per-turn loop. Above max_turns by a wide margin: hitting this is a
+# runaway, not a long match, and it should never be the thing that ends a wave.
+max_loop_iterations = 10000
+
+[trace_storage]
+# `errors_only` from day one (overview §7). A wave is one occurrence running hundreds of turns
+# with a task list per turn; persisting a clean one would write far more trace than match. What is
+# wanted is the wave that went wrong, and those are kept in full.
+mode = "async"
+errors_only = true

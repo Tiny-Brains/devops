@@ -31,7 +31,7 @@ url = "env://ORION_STATE_DB_URL"
 app_url            = "${APP_URL:-http://localhost:5173/}"
 
 # The OAuth App's Authorization callback URL, exactly as registered with GitHub.
-# https only, except on a loopback host (orion-gaps.md N5).
+# https only, except on a loopback host -- Orion refuses anything else at load.
 oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github/callback}"
 
 # Whether the session and oauth-state cookies carry Secure. Must substitute to a
@@ -40,6 +40,121 @@ oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github
 # store a Secure cookie from an http:// origin, so a plain-http stack sets false;
 # anything behind TLS must be true.
 cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
+
+# ------------------------------------------------- Jodi's numbers (JODI'S BLOCK, NOT SOMA'S)
+#
+# THESE MOVE WITH JODI. `[vars]` are per-Orion-instance, and Jodi is loaded into this instance
+# today -- so its policy numbers live in this file even though they belong to the jodi package. If
+# devops ever gives Jodi a server of its own (see the `jodi` service in docker-compose.yml), this
+# whole block moves to that server's config and nothing else changes. `jodi/scripts/load-package.sh`
+# lists what the deploying config owes Jodi, so the two can be checked against each other.
+#
+# Every value below is 02-jodi.md §9's, and every one is PROVISIONAL: they are policy guesses
+# that only a running ladder can tune. They live here rather than in the definitions because a
+# definition is versioned and content-hashed -- changing a pairing rate should not be a new
+# workflow version -- and `clippy -c` makes a var a workflow reads but the config does not
+# declare loud rather than silently null. Layer 06 finalises the rating numbers; 02-jodi.md §9
+# says what moves each one. When one must change without a deploy they move to a `policies`
+# table (jodi-gaps 4.7).
+
+# The game the clocks run for. One game today; a second makes this a roster and the clocks
+# loop over it. The workflows resolve the id from this slug rather than carrying a uuid, since
+# the id is generated when the volume is seeded and is not knowable at config time.
+game = "ants"
+
+# The presets a match may be played on, each with the number of seats it is played at.
+#
+# THE PRESET DECIDES THE SEAT COUNT (decision 14, 7 September 2026). Players is not a property of
+# the game but of the map: a preset names a world and how many play it, and `worldgen(seed, preset,
+# players)` is handed what the preset declares. That is why this is a list of tables rather than a
+# list of names, and why `matches.seat_count` is written per row.
+#
+# Pair spreads a version's matches across these so a rating reflects the game rather than one map,
+# and a re-paired trial takes the next one. Because coverage is even, a version's rating mixes seat
+# counts symmetrically across the field -- which inflates sigma rather than biasing mu, so no ladder
+# split is needed. P3 makes the cartridge manifest the source of this list.
+#
+# All three ship at two seats to begin with. Adding a four-seat preset is then a content change --
+# one entry here and a worldgen that honours it -- rather than a schema, protocol or pairing change.
+presets = [
+  { name = "standard", players = 2 },
+  { name = "maze",     players = 2 },
+  { name = "cell",     players = 2 },
+]
+
+# count: matches folded per run. Three tasks a match, well inside the channel's 60 s timeout at
+# ten a second. Raise it if count starts lagging the match rate.
+count_batch = 50
+
+# pair: how deep the pending queue may get. Deep enough that a claim never waits, shallow enough
+# that a pairing is at most a few minutes old. About two waves for four replicas. It is a
+# staleness cap, never the signal -- demand is the signal.
+pair_depth_target = 64
+
+# The in-flight policy (decision 1, 02-jodi.md §4). A new version plays `burst` matches at once,
+# because its first results are all paired on the same prior whichever order they run in, so
+# running them together costs no information and saves the wait. Once placed it drops to
+# `steady_cap`, where a result lands while the next is paired. Once its sigma is at or below
+# `settled_sigma` on both ladders it asks for none of its own and plays only as other versions'
+# opponent -- which is what makes demand, and with it the replica count, fall as the ladder
+# settles.
+burst = 8
+steady_cap = 2
+settled_sigma = 3.0
+
+# One match in five crosses weight classes, which is what keeps `open` one connected graph rather
+# than a union of class ladders. Enough to connect them without spending a class ladder's matches
+# on it.
+cross_class_fraction = 0.20
+
+# How many times a trial that failed for reasons the candidate is not to blame for is paired
+# again before the candidate is refused as UNPLAYABLE. Three platform failures on one candidate
+# is an incident, not a coincidence.
+repair_cap = 3
+
+# Missed turn clocks before a seat forfeits (DESIGN.md §7).
+forfeit_strikes = 5
+
+# The rating prior, and what a promoted version inherits. sigma_inflation doubles the doubt at
+# promotion, capped at the prior: a new version is not the old one, but it is not a stranger
+# either. Layer 06 finalises these and may replace the seed entirely. prior_mu and prior_sigma
+# must stay equal to the numbers devops/db-init/30-seed.sql gives the baselines, since a
+# baseline's first fold reads those as its own prior.
+prior_mu        = 25.0
+prior_sigma     = 8.333333333333334
+sigma_inflation = 2.0
+
+# TrueSkill's own parameters, passed to the plugin on every call rather than compiled into it.
+# The library defaults scaled to the prior: beta is prior_sigma/2, tau is prior_sigma/100.
+# `ts_tau` is the dynamics factor -- the thing that re-opens a settled version's uncertainty over
+# time, and so the thing that gives a stale rating near the top matches again. Layer 06 sets it.
+ts_beta             = 4.166666666666667
+ts_tau              = 0.08333333333333333
+ts_draw_probability = 0.10
+
+# ---------------------------------------------------------------------- plugins
+#
+# Off by default, which is why the running 1.7.0 node reported `plugins: disabled` until this
+# block existed. Also Jodi's requirement rather than Soma's: tb.rating and tb.pairing ship in the
+# jodi package, and without this they load as rows and quarantine the clocks that name them. It
+# moves with Jodi for the same reason the vars above do.
+#
+# `cache_dir` is deliberately absent. It is reserved in 1.7.0 and a non-empty value is REFUSED at
+# startup, so the "set a cache_dir" line in soma-gaps 1.12 and jodi-gaps 1.3 cannot be followed
+# yet; compiled artifacts are held in memory. Revisit when Orion supports one.
+#
+# Every ceiling is left at the host default: 1 MiB request and response, 5 s, 64 MiB of linear
+# memory. Both plugins are pure arithmetic over a document of a few dozen seats and are nowhere
+# near any of them -- tb.rating's component is under 100 KiB and its input is one match.
+[plugins]
+enabled = true
+
+# Signing. Empty until P6 mints the keys: with public_keys non-empty an upload must carry a
+# signature over the component digest by one of them, verified again at every load. Jodi's
+# plugins run no competitor content, so this is defence in depth rather than the boundary --
+# but the boundary it does draw is worth having before anything is reachable off loopback.
+[plugins.trust]
+public_keys = []
 
 [query]
 default_limit = 50

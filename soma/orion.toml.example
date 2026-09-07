@@ -45,7 +45,7 @@ url = "env://ORION_STATE_DB_URL"
 app_url            = "https://tinybrains.dev/"
 
 # The OAuth App's Authorization callback URL, exactly as registered with GitHub.
-# https only, except on a loopback host (orion-gaps.md N5).
+# https only, except on a loopback host -- Orion refuses anything else at load.
 oauth_redirect_uri = "https://tinybrains.dev/v1/auth/github/callback"
 
 # Whether the session and oauth-state cookies carry Secure. Must be a TOML

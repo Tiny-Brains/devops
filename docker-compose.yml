@@ -1,8 +1,13 @@
-# TinyBrains local stack: Postgres, Soma (the Orion package), and the web shell.
+# TinyBrains local stack: Postgres, Soma, Jodi, and the web shell.
 #
-# This directory is the deployment surface: compose, the environment template, the
-# database init scripts, and Soma's instance config. The application repos next to
-# it hold only what builds them -- their Dockerfile and their source.
+# This directory is THE DEPLOYMENT SURFACE, and that is the whole point of it. soma/, jodi/ and
+# kalam/ are separate repos that each ship a self-contained Orion package and know nothing about
+# the topology; this file decides how many servers there are and which package goes in which. A
+# modular monolith: modular in the repos, and as monolithic in deployment as it is useful to be.
+#
+# Today that means two servers -- Soma's, which also hosts Jodi's three cron clocks, and (when it
+# exists) Kalam's replicas. The day Soma's REST surface needs to scale independently of the match
+# maker, Jodi gets its own service here and neither repo changes.
 #
 #   cd devops
 #   cp .env.example .env     # then fill in the two GitHub values
@@ -62,6 +67,13 @@ services:
       SOMA_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
       ORION_STATE_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/orion_state
 
+      # Jodi's connector, resolved by THIS server because this is the server Jodi is loaded into.
+      # The same database as Soma's, and for now the same credential: Jodi writes matches,
+      # match_seats, rating_events, ratings, models and clocks, which is most of the schema. A
+      # dedicated `jodi` role with exactly those grants is worth doing the way the `kalam` role was
+      # -- it is just not the thing standing between here and a working ladder.
+      JODI_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
+
       # HS256 key for the session tokens and for the sign-in channel's state cookie.
       # Rotating it invalidates every live session and every sign-in in flight.
       # At least 32 bytes -- oauth2_login.state_secret refuses a shorter one.
@@ -104,6 +116,34 @@ services:
     # anywhere but a development machine.
     ports:
       - "127.0.0.1:8080:8080"
+
+  # Jodi: the match maker -- three cron channels, two plugins, one connector -- loaded into Soma's
+  # orion-server rather than run as a server of its own.
+  #
+  # THIS IS THE DEPLOYMENT DECISION, and it lives here on purpose. Soma, Jodi and Kalam are
+  # separate repos precisely so that this file gets to choose the topology: today Jodi shares
+  # Soma's Orion because it writes Soma's tables and there is no reason yet for a third server, and
+  # the day Soma needs to scale independently, Jodi moves by changing ORION_ADMIN below and giving
+  # it its own service. Nothing in jodi/ knows or cares which server it landed in.
+  #
+  # It is a one-shot loader, not a long-running service: Orion holds channels, workflows and
+  # plugins in its state database, so loading is something you do to a server, not something that
+  # runs beside it. `restart: "no"` and it exits 0.
+  jodi:
+    image: alpine:3.20
+    depends_on:
+      soma:
+        condition: service_healthy
+    volumes:
+      - ../jodi:/jodi:ro
+    environment:
+      ORION_ADMIN: http://soma:8080/api/v1/admin
+      # jodi-db resolves to a compose service name, which is a private address; Orion's SSRF guard
+      # refuses those unless the connector opts in.
+      JODI_ALLOW_PRIVATE_DB: "1"
+    command: >
+      sh -c "apk add --no-cache curl jq > /dev/null && sh /jodi/scripts/load-package.sh"
+    restart: "no"
 
   # Orion's own operations console: live dashboards, a system map of the channels
   # and connectors, workflow DAGs, and trace drill-downs. It is not part of Soma --
