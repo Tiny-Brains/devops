@@ -133,6 +133,9 @@ services:
         condition: service_healthy
     environment:
       ORION_CONFIG_TEMPLATE: /etc/orion/soma.toml.tmpl
+      # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
+      # a stack that starts with no keys checks no signature and says nothing about it.
+      TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
       ORION_STATE_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/orion_state
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
 
@@ -212,6 +215,9 @@ services:
         condition: service_healthy
     environment:
       ORION_CONFIG_TEMPLATE: /etc/orion/kalam.toml.tmpl
+      # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
+      # a stack that starts with no keys checks no signature and says nothing about it.
+      TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
       KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
       R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
       R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
@@ -257,6 +263,9 @@ services:
         condition: service_healthy
     environment:
       ORION_CONFIG_TEMPLATE: /etc/orion/kalam.toml.tmpl
+      # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
+      # a stack that starts with no keys checks no signature and says nothing about it.
+      TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
       KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
       R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
       R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}

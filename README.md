@@ -172,9 +172,30 @@ loader/Dockerfile       package-loader image
 loader/run.sh           registration, package loading, and health checks
 db-init/                fresh-volume database initialization and seed
 scripts/check-configs.sh shared configuration assertions and optional parser checks
+scripts/trust-keygen.sh  mints the Ed25519 plugin trust root for this machine
+scripts/sign-plugins.sh  signs every plugin component with it
+scripts/declare-engine.sh the engine cutover: deploy step 6, with its fleet preflight
 scripts/seed-baselines.sh development model-store fixtures
 scripts/resync-dev-schema.sh guarded development schema repair
 ```
+
+### Plugin signing
+
+Every Orion here sets `[plugins.trust] public_keys`, so no plugin loads without a detached Ed25519
+signature over its component digest — the ASCII `sha256:<64 hex>`, not the bytes — checked when the
+upload arrives and again by every node that loads it. A fresh checkout mints its own root:
+
+```
+./scripts/trust-keygen.sh     writes keys/ (ignored) and TB_TRUST_PUBLIC_KEY into .env
+./scripts/sign-plugins.sh     writes <component>.sig beside each plugin
+docker compose run --rm loader load
+```
+
+Re-run `sign-plugins.sh` after any plugin rebuild or `kalam/scripts/vendor-engine.sh`. A stale or
+missing signature is not silent: the node reports `degraded`, names the plugin and the digest under
+`plugins.failed_to_load` with `stage: "signature"`, and quarantines the channels whose workflows
+needed it. The private half never lives here — a deployment signs with its own key from its
+orchestrator's secret store and sets only the public half.
 
 ## What must stay true
 

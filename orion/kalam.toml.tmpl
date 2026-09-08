@@ -147,12 +147,22 @@ poll_secs = 5
 [plugins]
 enabled = true
 
-# Signing. Empty until P6 mints the keys: with public_keys non-empty an upload must carry a
-# signature over the component digest by one of them, verified again at every load. THE CARTRIDGE
-# IS THE ONE PLACE A THIRD PARTY'S CODE ENTERS THE PLATFORM, so this must be non-empty before a
-# second cartridge by an outsider ships (P7). Layer 07 §11.
+# Signing, and THE CARTRIDGE IS THE ONE PLACE A THIRD PARTY'S CODE ENTERS THE PLATFORM -- which is
+# why this list is non-empty here first and must stay so before a second cartridge by an outsider
+# ships (P7). Layer 07 §11.
+#
+# What a non-empty list buys: every plugin upload must carry a detached Ed25519 signature over the
+# DIGEST STRING -- the ASCII `sha256:<64 hex>`, not the component bytes -- and it is verified twice,
+# once when the upload arrives and again by THIS node when it loads the version. So a plugin row
+# that reached the state database by another path is still checked by the node that runs it, which
+# is the property that matters on a replica whose state is disposable and re-loaded on every boot.
+#
+# The key is raw 32 bytes, base64. `devops/scripts/trust-keygen.sh` mints the pair and writes the
+# public half to .env; `devops/scripts/sign-plugins.sh` writes the `.sig` each load script sends.
+# The server has no signing path at all -- it verifies and nothing else -- so the private half
+# lives with whoever builds the release, never here.
 [plugins.trust]
-public_keys = []
+public_keys = ["${TB_TRUST_PUBLIC_KEY}"]
 
 [cron]
 # The INNER deadline on a draining wave; the outer one is shutdown_force_timeout_secs above. Equal

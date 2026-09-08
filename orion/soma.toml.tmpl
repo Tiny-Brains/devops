@@ -194,11 +194,20 @@ op_allowlist = [
 [plugins]
 enabled = true
 
-# Signing. Empty until P6 mints the keys. This unit loads only plugins we wrote; the cartridge --
-# the one place a third party's code enters the platform -- loads on Kalam, where the same block
-# must be non-empty before a second cartridge by an outsider ships (P7). Layer 07 §11.
+# Signing. This unit loads only plugins we wrote -- tb.rating and tb.pairing; the cartridge, which
+# is the one place a third party's code enters the platform, loads on Kalam. The list is non-empty
+# on BOTH units on purpose: a half-configured trust posture is worse than none, because it is the
+# unchecked node you forget. Layer 07 §11.
+#
+# Same mechanism as Kalam's block: a detached Ed25519 signature over the digest string
+# `sha256:<64 hex>`, verified at upload and again at every load. Minted by
+# `devops/scripts/trust-keygen.sh`, applied by `devops/scripts/sign-plugins.sh`.
+#
+# One key serves both units today. Whether the cartridge and the platform's own plugins should
+# share a trust root at all is decision 31, still open and forced at P7 -- keeping this a per-unit
+# list is what leaves that decision free to go either way.
 [plugins.trust]
-public_keys = []
+public_keys = ["${TB_TRUST_PUBLIC_KEY}"]
 
 [cron]
 # How long shutdown waits for an in-flight occurrence. An INNER deadline under

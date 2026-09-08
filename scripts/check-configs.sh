@@ -97,6 +97,22 @@ case "$ed" in
     bad "engine_digest is $ed -- expected \"\${KALAM_ENGINE_DIGEST}\"" ;;
 esac
 
+# ---- 4. neither unit is left unchecked ---------------------------------------
+# `[plugins.trust] public_keys` empty is not an error anywhere: the node loads whatever it is sent
+# and says nothing. A trust posture that is on for one unit and off for the other is worse than one
+# that is off for both, because the unchecked node is the one nobody remembers. Layer 07 §11.
+for f in "$SOMA" "$KALAM"; do
+  keys=$(grep -A1 '^\[plugins\.trust\]' "$f" | grep '^public_keys' | cut -d= -f2- | tr -d ' ')
+  case "$keys" in
+    '[]'|'')
+      bad "$f has no plugins.trust.public_keys -- that node verifies no signature and reports nothing about it" ;;
+    *'${TB_TRUST_PUBLIC_KEY}'*)
+      ok "$f trusts \${TB_TRUST_PUBLIC_KEY}" ;;
+    *)
+      bad "$f pins a literal trust key ($keys) -- it must be \${TB_TRUST_PUBLIC_KEY}, so a deployment sets its own from a secret store" ;;
+  esac
+done
+
 echo "==> the split itself"
 
 # Kalam must not be in cluster mode (decision 41): a shared `forbid` row makes the wave a
@@ -140,6 +156,7 @@ if command -v docker > /dev/null 2>&1 && docker image inspect tinybrains-soma > 
          -e REDIS_URL=redis://redis:6379 \
          -e KALAM_ENGINE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000 \
          -e R2_ENDPOINT=http://minio:9000 \
+         -e TB_TRUST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
          -v "$PWD/$f:/tmp/c.toml:ro" tinybrains-soma -c /tmp/c.toml validate-config > /dev/null 2>&1; then
       ok "$f parses"
     else

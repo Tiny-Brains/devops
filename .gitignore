@@ -3,3 +3,7 @@
 .env
 .env.local
 orion/orion.local.toml
+
+# The plugin trust root -- devops/scripts/trust-keygen.sh writes it. Never committed:
+# the server only verifies, so a key beside the thing it signs proves nothing.
+keys/
