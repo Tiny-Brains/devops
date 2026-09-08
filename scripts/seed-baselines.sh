@@ -21,11 +21,23 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-AXON_CONTAINER="${AXON_CONTAINER:-tinybrains-axon-1}"
 DB_CONTAINER="${DB_CONTAINER:-tinybrains-db-1}"
 DB_USER="${DB_USER:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_USER)}"
 DB_NAME="${DB_NAME:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_DB)}"
 AXON_SRC="${AXON_SRC:-../axon}"
+
+# LAYER 07 §8.1 MOVED THE STORE OFF A VOLUME. It used to be a directory inside the replica's
+# container, so seeding was `docker cp`. It is now an S3 bucket that the admission instance and
+# every replica share -- which is what makes a fleet possible, since across hosts there is no
+# shared volume -- so seeding is a signed PUT, to the one place all of them read.
+#
+# Signed by curl rather than by axon: this script's job is to put bytes where axon will look for
+# them, and a seeder that depends on the code under test cannot tell you the store is wrong.
+S3_ENDPOINT="${R2_ENDPOINT:-http://127.0.0.1:9000}"
+S3_BUCKET="${AXON_STORE_BUCKET:-tinybrains-models}"
+S3_REGION="${R2_REGION:-us-east-1}"
+S3_KEY="${R2_ACCESS_KEY:-tinybrains}"
+S3_SECRET="${R2_SECRET_KEY:-tinybrains-dev-secret}"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -34,15 +46,18 @@ echo "==> dumping the reference fixtures"
 ( cd "$AXON_SRC" && cargo run --quiet --release --example dump-fixtures -- "$TMP" ) > "$TMP/out.json"
 cat "$TMP/out.json"
 
-echo "==> copying them into $AXON_CONTAINER's store"
-# The store is `<kind>/sha256/<hex>` under AXON_STORE_DIR, and dump-fixtures wrote exactly that
-# layout, so this is a directory copy rather than an API call. There is no upload endpoint on a
-# replica on purpose: a replica fetches by hash and cannot be told where to fetch from.
-for d in "$TMP"/*/; do
-  [ -d "$d" ] || continue
-  docker cp "$d" "$AXON_CONTAINER:/var/lib/axon/" 2>/dev/null || true
+echo "==> putting them in $S3_BUCKET at $S3_ENDPOINT"
+# dump-fixtures writes the store's own `<kind>/sha256/<hex>` layout, so each file's path under $TMP
+# IS its key. There is no upload endpoint on a replica on purpose: a replica fetches by hash and
+# cannot be told where to fetch from, so bytes reach it only by being in the store already.
+( cd "$TMP" && find . -type f -path './*/sha256/*' | sed 's|^\./||' ) | while read -r k; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:$S3_REGION:s3" \
+      --user "$S3_KEY:$S3_SECRET" -X PUT --data-binary "@$TMP/$k" "$S3_ENDPOINT/$S3_BUCKET/$k")
+  case "$code" in
+    200) echo "    $k" ;;
+    *) echo "PUT $k answered HTTP $code -- is the bucket there? \`docker compose run --rm loader setup\`" >&2; exit 1 ;;
+  esac
 done
-docker exec "$AXON_CONTAINER" sh -c 'find /var/lib/axon -type f | head -20'
 
 RAGGED_W=$(python3 -c "import json;print(json.load(open('$TMP/out.json'))['ragged']['weights'])")
 RAGGED_A=$(python3 -c "import json;print(json.load(open('$TMP/out.json'))['ragged']['adapter'])")

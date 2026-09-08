@@ -234,8 +234,12 @@ services:
     stop_grace_period: ${KALAM_STOP_GRACE:-2760s}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8082:8080"   # this replica's admin plane
-      - "127.0.0.1:9092:9090"   # its axon sidecar, which shares this namespace
+      # This replica's admin plane. Its axon sidecar is NOT published, and that is the point: the
+      # sidecar binds 127.0.0.1 inside this namespace, so the only thing that can reach it is the
+      # wave running here. Publishing it would not work anyway -- a published port forwards to the
+      # container IP, and nothing is listening there. Reach it with
+      #   docker exec tinybrains-kalam-1-1 curl -s 127.0.0.1:9090/healthz
+      - "127.0.0.1:8082:8080"
 
   # The second replica. `--profile fleet`, because two replicas is what the failure walks need and
   # not what everyday development wants.
@@ -266,7 +270,6 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8083:8080"
-      - "127.0.0.1:9093:9090"
 
   # --------------------------------------------------------------------------- the one loader
   #
@@ -399,18 +402,20 @@ services:
     environment:
       AXON_MODE: replica
       AXON_BIND: 127.0.0.1:9090
-      AXON_STORE_DIR: /var/lib/axon
+      # THE MODEL STORE, S3/SigV4 -- layer 07 §8.1. It replaced the shared `axon-store` volume, and
+      # not as an optimisation: the admission instance and every replica must share ONE store, and
+      # across hosts there is no shared volume. Locally that is minio; in a deployment, R2.
+      AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+      AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
+      AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
+      AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
+      AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
       # LAYER 07 §7.1: this must exceed wave_k x seats x max_class_bytes, which is what decision 5
       # actually bounds K by. At K=16, 2 seats and a 64 MiB `large` class that is 2 GiB. It is
       # smaller here because the local stack holds a handful of Micro models and nothing large --
       # raise it, or lower wave_k, before a real class mix arrives.
       AXON_MEMORY_BUDGET_BYTES: ${AXON_MEMORY_BUDGET_BYTES:-1073741824}
       AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
-    volumes:
-      # The store, by hash. Layer 07 §8.1 replaces the directory with R2 through the same trait --
-      # and across hosts there is no shared volume, so that is a precondition for the fleet rather
-      # than an optimisation. scripts/seed-baselines.sh writes the baselines' bytes straight in.
-      - axon-store:/var/lib/axon
     restart: unless-stopped
 
   axon-2:
@@ -423,11 +428,16 @@ services:
     environment:
       AXON_MODE: replica
       AXON_BIND: 127.0.0.1:9090
-      AXON_STORE_DIR: /var/lib/axon
+      # THE MODEL STORE, S3/SigV4 -- layer 07 §8.1. It replaced the shared `axon-store` volume, and
+      # not as an optimisation: the admission instance and every replica must share ONE store, and
+      # across hosts there is no shared volume. Locally that is minio; in a deployment, R2.
+      AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+      AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
+      AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
+      AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
+      AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
       AXON_MEMORY_BUDGET_BYTES: ${AXON_MEMORY_BUDGET_BYTES:-1073741824}
       AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
-    volumes:
-      - axon-store:/var/lib/axon
     restart: unless-stopped
 
   # The SECOND role of the same binary: admission (layer 04 §8, layer 08). It differs from the
@@ -441,7 +451,12 @@ services:
     environment:
       AXON_MODE: admission
       AXON_BIND: 0.0.0.0:9090
-      AXON_STORE_DIR: /var/lib/axon
+      # The SAME bucket every replica reads. This instance is the only writer.
+      AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+      AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
+      AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
+      AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
+      AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
       # Only this instance may reach the public internet, and only these two hosts. A release
       # download URL on github.com redirects to objects.githubusercontent.com, so both are needed.
       AXON_FETCH_ALLOW_HOSTS: ${AXON_FETCH_ALLOW_HOSTS:-github.com,objects.githubusercontent.com}
@@ -450,8 +465,6 @@ services:
       AXON_MEMORY_BUDGET_BYTES: ${AXON_ADMISSION_MEMORY_BYTES:-2147483648}
       # Nothing plays here, so a model need not linger; the clock unloads explicitly anyway.
       AXON_IDLE_TTL_S: ${AXON_ADMISSION_IDLE_TTL_S:-120}
-    volumes:
-      - axon-store:/var/lib/axon
     restart: unless-stopped
     ports:
       - "127.0.0.1:9091:9090"
@@ -481,5 +494,4 @@ services:
 
 volumes:
   db-data:
-  axon-store:
   blob-data:

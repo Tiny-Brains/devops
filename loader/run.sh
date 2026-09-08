@@ -159,14 +159,23 @@ SQL
   psql -X "$DB" -At -c "SELECT '    ' || slug || ': engine ' || left(active_engine_digest, 19) || '..., adapter_ops_max=' || (manifest -> 'budgets' ->> 'adapter_ops_max') || ', ' || jsonb_array_length(reference_observations) || ' observation(s)' FROM games"
   psql -X "$DB" -At -c "SELECT '    ' || g.slug || ': season ' || s.number || ' ' || CASE WHEN s.closed_at IS NOT NULL THEN 'closed' WHEN now() < s.submissions_open_at THEN 'scheduled' WHEN now() < s.submissions_close_at THEN 'open' ELSE 'settling' END || ', engine ' || left(s.engine_digest, 19) || '..., submissions ' || to_char(s.submissions_open_at, 'YYYY-MM-DD') || ' to ' || to_char(s.submissions_close_at, 'YYYY-MM-DD') FROM seasons s JOIN games g ON g.id = s.game_id ORDER BY (s.closed_at IS NULL) DESC, s.number DESC LIMIT 1"
 
-  echo "==> the replay bucket"
+  echo "==> the buckets"
+  # TWO buckets, one credential: replays, written by the wave through a presigned PUT, and the
+  # MODEL STORE, which layer 07 §8.1 moved off the shared volume. The admission axon writes the
+  # model store and every replica reads it -- and they MUST be the same store, or admission
+  # succeeds and every match the version is then paired for fails at the residency barrier,
+  # quietly and a long way from the cause. Across hosts there is no shared volume, so this is what
+  # makes a fleet possible rather than an optimisation.
+  #
   # S3 PUT Bucket, signed with sigv4 by curl itself. 200 is created, 409 is BucketAlreadyOwnedByYou.
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:us-east-1:s3" \
-      --user "${R2_ACCESS_KEY:?}:${R2_SECRET_KEY:?}" -X PUT "${R2_ENDPOINT:?}/${R2_BUCKET:?}")
-  case "$code" in
-    200|409) echo "    $R2_BUCKET at $R2_ENDPOINT" ;;
-    *) echo "creating bucket $R2_BUCKET at $R2_ENDPOINT answered HTTP $code" >&2; exit 1 ;;
-  esac
+  for b in "${R2_BUCKET:?}" "${AXON_STORE_BUCKET:-tinybrains-models}"; do
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:${R2_REGION:-us-east-1}:s3" \
+        --user "${R2_ACCESS_KEY:?}:${R2_SECRET_KEY:?}" -X PUT "${R2_ENDPOINT:?}/$b")
+    case "$code" in
+      200|409) echo "    $b at $R2_ENDPOINT" ;;
+      *) echo "creating bucket $b at $R2_ENDPOINT answered HTTP $code" >&2; exit 1 ;;
+    esac
+  done
 }
 
 # ---------------------------------------------------------------------------- load

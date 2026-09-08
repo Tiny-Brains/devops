@@ -36,6 +36,14 @@ Layer 07 split the one server in two, and **neither half is a scaling choice**:
 
 Kalam loses nothing by it, because its fence is not Orion's — it is the leased claim on `matches`.
 
+**Every axon shares one store, and that is a correctness property rather than a saving.** The
+admission instance mirrors what it verified under the bytes' hash; every replica fetches by that
+hash. Two stores would mean admission succeeds and every match the version is then paired for fails
+at the residency barrier — quietly, and a long way from the cause. Locally that used to be one
+volume; **across hosts there is no shared volume**, so since layer 07 §8.1 it is an S3 bucket signed
+with SigV4 — MinIO here, R2 in a deployment. `AXON_STORE_S3_*` on each axon; the code is
+`axon/src/store.rs`.
+
 **A replica's Orion state is disposable**: a SQLite file on the container filesystem with no volume
 behind it, holding the loaded package and nothing else. **So re-running `loader` is part of
 recreating a replica** — `docker compose up -d --force-recreate kalam-1` gives you a replica with
@@ -86,18 +94,23 @@ db               postgres:16   two databases: `soma` (the data) and `orion_state
 redis                          cluster mode's shared backend: dedup, caches, per-channel rate limits
 soma             :8080         orion-server 1.7.0, CLUSTER MODE: the REST surface and Jodi's four clocks
 kalam-1          :8082         orion-server 1.7.0, single instance, local SQLite: the wave
-axon-1           :9092         the Model Loader, replica role -- a SIDECAR in kalam-1's network
-                               namespace, so the wave reaches it at 127.0.0.1:9090
+axon-1           (not published) the Model Loader, replica role -- a SIDECAR in kalam-1's network
+                               namespace, bound to 127.0.0.1:9090 so the only thing that can reach
+                               it is the wave running beside it:
+                               docker exec tinybrains-kalam-1-1 curl -s 127.0.0.1:9090/healthz
 loader           one-shot      declares the deployment facts, installs each package into the server
                                that runs it, asserts tb.ants is loaded on every replica, exits 0
 web              :5173         nginx: the built SPA, and /v1 proxied to soma
 orion-ui         :8081         Orion's operations console 1.6.0, reading soma's admin API
 axon-admission   :9091         the same binary in its admission role -- fetches by URL, verifies
-minio            :9000/:9001   the object store: replays, written by the wave through a presigned PUT
+minio            :9000/:9001   the object store, TWO buckets on one credential: `tinybrains-replays`,
+                               written by the wave through a presigned PUT, and `tinybrains-models`,
+                               the MODEL STORE that layer 07 moved off the shared `axon-store`
+                               volume. Both are created by the loader
 
 --profile fleet adds:
 kalam-2          :8083         a second replica -- what the two failure walks need
-axon-2           :9093         its sidecar
+axon-2           (not published) its sidecar
 ```
 
 With the fleet profile, tell the loader about the second replica or it will only install into the
