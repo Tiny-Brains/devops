@@ -113,6 +113,20 @@ for f in "$SOMA" "$KALAM"; do
   esac
 done
 
+# ---- 5. the admin plane is not open -------------------------------------------
+# `admin_auth.enabled = false` is the same shape of silence as an empty trust list: the plane
+# answers everyone and nothing says so. Layer 07 §11 gates it on "before anything is reachable off
+# loopback", which is a date nobody notices passing.
+for f in "$SOMA" "$KALAM"; do
+  if ! grep -q '^\[admin_auth\]' "$f"; then
+    bad "$f has no [admin_auth] block -- its admin plane installs anything anyone asks it to"
+  elif grep -A2 '^\[admin_auth\]' "$f" | grep -q '^enabled = true'; then
+    ok "$f enables admin_auth"
+  else
+    bad "$f has [admin_auth] but does not enable it"
+  fi
+done
+
 echo "==> the split itself"
 
 # Kalam must not be in cluster mode (decision 41): a shared `forbid` row makes the wave a
@@ -157,6 +171,7 @@ if command -v docker > /dev/null 2>&1 && docker image inspect tinybrains-soma > 
          -e KALAM_ENGINE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000 \
          -e R2_ENDPOINT=http://minio:9000 \
          -e TB_TRUST_PUBLIC_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+         -e ORION_ADMIN_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
          -v "$PWD/$f:/tmp/c.toml:ro" tinybrains-soma -c /tmp/c.toml validate-config > /dev/null 2>&1; then
       ok "$f parses"
     else

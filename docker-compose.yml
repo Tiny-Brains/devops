@@ -136,6 +136,9 @@ services:
       # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
       # a stack that starts with no keys checks no signature and says nothing about it.
       TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
+      # The admin credential. Required, not defaulted: an unauthenticated admin plane is the one
+      # that installs anything anyone asks it to.
+      ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
       ORION_STATE_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/orion_state
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
 
@@ -143,7 +146,11 @@ services:
       # most of the schema, and a dedicated `jodi` role with exactly those grants is worth doing
       # the way `kalam` was (layer 07 §10, still owed).
       SOMA_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
-      JODI_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
+      # Jodi's OWN role since layer 07 §10, not the schema owner: SELECT where it reads, INSERT and
+      # UPDATE only where it writes, no DELETE anywhere, and nothing at all on `sessions`. The
+      # connector's `operations: {delete: false}` is the config half of that; this is the half that
+      # survives a config edit.
+      JODI_DB_URL: postgres://jodi:${JODI_DB_PASSWORD:-jodi-dev-secret}@db:5432/${POSTGRES_DB:-soma}
 
       # HS256 key for the session tokens and for the sign-in channel's state cookie. Rotating it
       # invalidates every live session and every sign-in in flight. At least 32 bytes.
@@ -218,6 +225,9 @@ services:
       # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
       # a stack that starts with no keys checks no signature and says nothing about it.
       TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
+      # The admin credential. Required, not defaulted: an unauthenticated admin plane is the one
+      # that installs anything anyone asks it to.
+      ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
       KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
       R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
       R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
@@ -266,6 +276,9 @@ services:
       # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
       # a stack that starts with no keys checks no signature and says nothing about it.
       TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
+      # The admin credential. Required, not defaulted: an unauthenticated admin plane is the one
+      # that installs anything anyone asks it to.
+      ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
       KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
       R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
       R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
@@ -341,6 +354,9 @@ services:
       ENGINE_RELEASE: ${ENGINE_RELEASE:-0}
       LOADER_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
       KALAM_DB_PASSWORD: ${KALAM_DB_PASSWORD:-kalam-dev-secret}
+      JODI_DB_PASSWORD: ${JODI_DB_PASSWORD:-jodi-dev-secret}
+      # What load-package.sh in all three packages already reads, and what run.sh now sends too.
+      ORION_ADMIN_API_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
       KALAM_ENGINE_DIGEST: ${KALAM_ENGINE_DIGEST:-}
       # soma
       SOMA_ALLOW_PRIVATE_DB: "1"

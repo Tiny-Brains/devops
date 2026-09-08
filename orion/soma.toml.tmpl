@@ -191,6 +191,22 @@ op_allowlist = [
 # and quarantine the clocks that name them. `cache_dir` is deliberately absent: reserved in 1.7.0,
 # and a non-empty value is REFUSED at startup. tb.ants is NOT loaded here -- it is Kalam's, and
 # this unit plays no matches.
+# ---------------------------------------------------------------------------- the admin plane
+#
+# THE ADMIN CREDENTIAL IS THE TRUST ROOT FOR INSTALLING ANYTHING. It reads and writes connector
+# secrets and can rewrite any workflow, so it outranks the plugin signature above -- a signature is
+# a check that survives the upload, not a second principal. Layer 07 §11 gates this on "before
+# anything is reachable off loopback": locally every admin port is bound to 127.0.0.1, and the
+# moment a loader has to reach a replica across a network that stops being true.
+#
+# An entry is either the key or `sha256:<64 hex>` of it, so a deployment keeps a digest in config
+# and the secret in its orchestrator's store. A plaintext key must be at least 32 characters;
+# `openssl rand -hex 32` gives 64. Multiple entries exist for zero-downtime rotation: add the new
+# key, roll the clients, drop the old one.
+[admin_auth]
+enabled = true
+api_keys = ["${ORION_ADMIN_KEY}"]
+
 [plugins]
 enabled = true
 

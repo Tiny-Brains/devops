@@ -64,6 +64,13 @@ for a in "$@"; do
 done
 
 DB="${LOADER_DB_URL:?LOADER_DB_URL is required -- the match database, as its owner}"
+# The preflight reads /health's plugin digests, and that detail is admin-only when admin_auth is
+# enabled: `show_detail = !admin_auth.enabled || a valid key`. Without the credential /health still
+# answers 200, omits `plugins`, and the preflight below concludes the fleet carries no engine --
+# refusing a cutover that was fine. Unset is still allowed, for a server with admin_auth off.
+ADMIN_AUTH=""
+[ -n "${ORION_ADMIN_API_KEY:-}" ] && ADMIN_AUTH="Authorization: Bearer ${ORION_ADMIN_API_KEY}"
+hcurl() { if [ -n "$ADMIN_AUTH" ]; then curl -H "$ADMIN_AUTH" "$@"; else curl "$@"; fi; }
 ADMINS="${KALAM_ORION_ADMINS:-${ORION_ADMIN:-}}"
 if [ -z "$ADMINS" ]; then
   echo "KALAM_ORION_ADMINS (or ORION_ADMIN) is required" >&2; exit 1
@@ -98,12 +105,17 @@ carriers=0
 drainers=0
 for admin in $(echo "$ADMINS" | tr ',' ' '); do
   base=$(echo "$admin" | sed 's|/api/v1/admin$||')
-  if ! h=$(curl -fsS "$base/health" 2>/dev/null); then
+  if ! h=$(hcurl -fsS "$base/health" 2>/dev/null); then
     echo "  FAIL  $base is not answering /health" >&2; exit 1
   fi
   d=$(echo "$h" | jq -r '[.plugins.loaded[]? | select(.plugin == "tb.ants") | .digest] | first // ""')
   q=$(echo "$h" | jq -r '(.channels.quarantined // []) | length')
-  if [ -z "$d" ]; then
+  if [ "$(echo "$h" | jq -r 'has("plugins")')" != "true" ]; then
+    echo "  FAIL  $base answered /health without its plugin detail." >&2
+    echo "        That is admin_auth hiding it, not a node with no plugins: set" >&2
+    echo "        ORION_ADMIN_API_KEY so this can read what it is asserting on." >&2
+    exit 1
+  elif [ -z "$d" ]; then
     echo "  FAIL  $base has no tb.ants loaded -- invisible capacity, not a replica" >&2
     exit 1
   elif [ "$q" != "0" ]; then

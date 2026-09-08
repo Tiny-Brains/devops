@@ -57,6 +57,16 @@ kalam_admins() { echo "$KALAM_ADMINS" | tr ',' ' '; }
 
 psql_db() { psql "$DB" -q -v ON_ERROR_STOP=1 "$@"; }
 
+# The admin plane takes a bearer credential since layer 07 §11. The three packages' own
+# load-package.sh have read ORION_ADMIN_API_KEY since they were written; this script had not, and
+# its sweep and health calls go to the same plane. Unset is still allowed -- a server with
+# admin_auth disabled accepts either -- so this stays usable against a bare `orion-server`.
+ADMIN_AUTH=""
+[ -n "${ORION_ADMIN_API_KEY:-}" ] && ADMIN_AUTH="Authorization: Bearer ${ORION_ADMIN_API_KEY}"
+acurl() {
+  if [ -n "$ADMIN_AUTH" ]; then curl -H "$ADMIN_AUTH" "$@"; else curl "$@"; fi
+}
+
 # ---------------------------------------------------------------------------- wait
 wait_one() {
   echo "==> waiting for orion at $1"
@@ -90,11 +100,19 @@ engine_digest() {
 }
 
 setup() {
-  echo "==> the kalam role can log in"
+  echo "==> the kalam and jodi roles can log in"
   # Through stdin rather than -c: psql expands :'var' in a script, not in a -c string, and a -c
   # that looks right and is not expanded fails with a syntax error at the colon.
+  #
+  # Both roles are created by the migration with LOGIN and no password, so the committed schema
+  # ships no secret and the credential is ours. Jodi got its own role in layer 07 §10: its clocks
+  # ran as the schema owner while they lived in Soma's package, and an owner that can drop the
+  # table it folds ratings into is a grant nobody chose.
   psql_db -v pw="${KALAM_DB_PASSWORD:?KALAM_DB_PASSWORD is required}" <<'SQL'
 ALTER ROLE kalam WITH LOGIN PASSWORD :'pw';
+SQL
+  psql_db -v pw="${JODI_DB_PASSWORD:?JODI_DB_PASSWORD is required}" <<'SQL'
+ALTER ROLE jodi WITH LOGIN PASSWORD :'pw';
 SQL
 
   DIGEST=$(engine_digest)
@@ -200,12 +218,12 @@ sweep_foreign() {   # $1 admin, $2... tags to remove
         connectors) key=id ;;
         plugins)    key=plugin_id ;;
       esac
-      for id in $(curl -sS "$admin/$kind?tag=$tag&limit=500" | jq -r ".data[].$key" 2>/dev/null); do
+      for id in $(acurl -sS "$admin/$kind?tag=$tag&limit=500" | jq -r ".data[].$key" 2>/dev/null); do
         # A plugin is archived before it is deleted, and it cannot be archived while an active
         # workflow calls its functions -- which is why workflows are swept first.
-        [ "$kind" = plugins ] && curl -sS -X PATCH "$admin/plugins/$id/status" \
+        [ "$kind" = plugins ] && acurl -sS -X PATCH "$admin/plugins/$id/status" \
             -H 'Content-Type: application/json' -d '{"status":"archived"}' -o /dev/null || true
-        curl -sS -X DELETE "$admin/$kind/$id" -o /dev/null || true
+        acurl -sS -X DELETE "$admin/$kind/$id" -o /dev/null || true
         echo "    swept $tag $kind/$id"
       done
     done
@@ -225,14 +243,19 @@ load_one() {   # $1 package, $2 admin
 # nothing errors. So a replica's real readiness gate is this, not /readyz.
 health() {   # $1 admin, $2 what must be there ("" to skip the assertion)
   echo "==> health at $1"
-  h=$(curl -fsS "${1%/api/v1/admin}/health")
+  # AUTHENTICATED, and it has to be. /health's detail -- workflows_loaded, the plugin list, the
+  # quarantined channels -- is gated on `show_detail = !admin_auth.enabled || a valid key`. With
+  # admin_auth on, an unauthenticated /health still answers 200 with the coarse component states
+  # and simply OMITS `plugins`, so the assertion below reads "no tb.ants loaded" on a node that has
+  # it. That is the invisible-capacity false positive, produced by the check meant to catch it.
+  h=$(acurl -fsS "${1%/api/v1/admin}/health")
   echo "$h" | jq -r '
     "    status: \(.status)",
     "    plugins: \([.plugins.loaded[]? | "\(.plugin)@\(.version)"] | join(", "))",
     (if .components.config_propagation then "    config_propagation: \(.components.config_propagation)" else empty end),
     (if (.plugins.failed_to_load // []) | length > 0 then "    FAILED TO LOAD: \(.plugins.failed_to_load)" else empty end),
     (if (.channels.quarantined // []) | length > 0 then "    QUARANTINED: \(.channels.quarantined)" else empty end)'
-  curl -fsS "$1/channels?limit=500" | jq -r '.data | group_by(.tags[0]) | map("    \(.[0].tags[0]): \(length) channels") | .[]'
+  acurl -fsS "$1/channels?limit=500" | jq -r '.data | group_by(.tags[0]) | map("    \(.[0].tags[0]): \(length) channels") | .[]'
   if [ -n "$2" ]; then
     echo "$h" | jq -e --arg p "$2" '[.plugins.loaded[]?.plugin] | index($p)' > /dev/null \
       || { echo "    $2 IS NOT LOADED at $1 -- this node is invisible capacity, not a working replica" >&2; exit 1; }
