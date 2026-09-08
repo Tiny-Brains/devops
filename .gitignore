@@ -2,4 +2,4 @@
 # The committed template is .env.example.
 .env
 .env.local
-soma/orion.local.toml
+orion/orion.local.toml

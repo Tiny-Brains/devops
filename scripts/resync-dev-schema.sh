@@ -77,4 +77,6 @@ UNION ALL SELECT 'clocks', count(*) FROM clocks;
 SQL
 
 echo "==> done. The dump is kept at $BACKUP in case something above went wrong."
-echo "    Soma's cron clocks will pick up the new tables on their next tick; no restart needed."
+echo "    The seed wrote the engine-digest placeholder and no manifest; declare both again:"
+echo "        docker compose run --rm loader setup"
+echo "    The cron clocks will pick up the new tables on their next tick; no restart needed."

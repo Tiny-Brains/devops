@@ -1,0 +1,244 @@
+# Orion server config for THE ONE ORION: Soma, Jodi and Kalam in one process. Requires 1.7.0.
+#
+# Every ${NAME:-default} below is substituted by orion-server from the container's environment
+# before the file is parsed -- Orion's own config syntax -- so one image serves every environment
+# and nothing is written to disk. Only non-secret values are read this way: the state database URL
+# is an env:// reference the server resolves itself, and the GitHub client id and secret are
+# referenced the same way from the sign-in channel, so the file holds no credential in any form.
+#
+# It is valid TOML as it stands: `orion-server -c orion.toml.tmpl validate-config` and
+# `orion-server clippy <package> -c orion.toml.tmpl` read it with the defaults applied.
+#
+# THREE PACKAGES, ONE [vars] BLOCK. `[vars]` are per Orion instance, so each package's policy
+# numbers live in whichever instance runs it -- and today that is this one for all three. The block
+# below is sectioned by owner, and every section is labelled with the package that reads it, so
+# that the day devops gives a package a server of its own, its section moves with it and nothing in
+# the package repos changes. <package>/scripts/load-package.sh lists what the deploying config owes
+# it, so the two can be checked against each other.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+# Soma's channels declare route_pattern "/v1/...", and the full request path is matched against
+# the pattern -- so the "/v1" prefix appears in both places. Jodi and Kalam are cron only and
+# bind no route.
+data_mounts = ["/v1"]
+
+# THE DRAIN, and the one number the single-server topology decides differently from a fleet.
+#
+# A Kalam replica of its own drains for the length of the longest match (max_turns x turn_ms, about
+# 19 minutes) so that a `docker stop` finishes the wave in hand -- and `shutdown_drain_secs` is a
+# FIXED period, not a maximum, so a replica pays that on every stop whether or not a wave is in
+# hand. On the one local server that would make every `docker compose down` a twenty-minute wait.
+# So it is short here: an interrupted wave's rows stay `running` until their lease lapses
+# ([vars] lease_seconds, five minutes) and are then replayed from turn zero, which is exactly what
+# the lease exists for. Raise all three together, and the compose stop_grace_period with them, to
+# rehearse a real drain. The [cron] timeout must exceed the two here, or the occurrence is
+# cancelled while the server is still willing to wait.
+shutdown_drain_secs         = ${ORION_SHUTDOWN_DRAIN_SECS:-5}
+shutdown_force_timeout_secs = ${ORION_SHUTDOWN_FORCE_SECS:-10}
+
+# Orion's own state: channels, workflows, plugins, cron occurrences, traces. NOT Soma's data --
+# a separate database on the same Postgres, so `psql -d soma` never shows engine tables and Soma's
+# schema can be dropped without losing the loaded packages.
+[storage]
+url = "env://ORION_STATE_DB_URL"
+
+[vars]
+# ------------------------------------------------------------------------------- SOMA
+# Read by the workflows as metadata.vars and by the sign-in channel as var://. The URL defaults are
+# the localhost stack; a deployment sets the variables.
+app_url            = "${APP_URL:-http://localhost:5173/}"
+
+# The OAuth App's Authorization callback URL, exactly as registered with GitHub. https only,
+# except on a loopback host -- Orion refuses anything else at load.
+oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github/callback}"
+
+# Whether the session and oauth-state cookies carry Secure. Must substitute to a bare TOML boolean;
+# orion/entrypoint.sh normalises SOMA_COOKIE_SECURE (0/false/no -> false, anything else -> true)
+# before the server reads it. Browsers will not store a Secure cookie from an http:// origin, so a
+# plain-http stack sets false; anything behind TLS must be true.
+cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
+
+# ------------------------------------------------------------------------------- JODI
+# 02-jodi.md §9's numbers, every one PROVISIONAL: policy guesses only a running ladder can tune.
+# They live here rather than in the definitions because a definition is versioned and
+# content-hashed -- changing a pairing rate should not be a new workflow version. Layer 06
+# finalises the rating numbers; when one must change without a deploy they move to a `policies`
+# table (jodi-gaps 4.7).
+
+# The game the clocks run for. One game today; a second makes this a roster.
+game = "ants"
+
+# The presets a match may be played on, each with the number of seats it is played at. THE PRESET
+# DECIDES THE SEAT COUNT (decision 14): a preset names a world and how many play it. Pair spreads
+# a version's matches across these so a rating reflects the game rather than one map. P3 makes the
+# cartridge manifest the source of this list.
+presets = [
+  { name = "standard", players = 2 },
+  { name = "maze",     players = 2 },
+  { name = "cell",     players = 2 },
+]
+
+# count: matches folded per run. pair: how deep the pending queue may get -- a staleness cap,
+# never the signal; demand is the signal.
+count_batch       = 50
+pair_depth_target = 64
+
+# The in-flight policy (decision 1, 02-jodi.md §4): `burst` matches at once for a new version,
+# `steady_cap` once placed, none of its own once its sigma is at or below `settled_sigma`.
+burst         = 8
+steady_cap    = 2
+settled_sigma = 3.0
+
+# One match in five crosses weight classes, which keeps `open` one connected graph.
+cross_class_fraction = 0.20
+
+# Platform failures on one candidate before it is refused UNPLAYABLE.
+repair_cap = 3
+
+# Missed turn clocks before a seat forfeits (DESIGN.md §7). Kalam APPLIES this as strike_ceiling
+# below; count reads its consequences off the row. The two must stay equal.
+forfeit_strikes = 5
+
+# The rating prior, and what a promoted version inherits. prior_mu and prior_sigma must stay equal
+# to the numbers db-init/30-seed.sql gives the baselines, since a baseline's first fold reads those
+# as its own prior.
+prior_mu        = 25.0
+prior_sigma     = 8.333333333333334
+sigma_inflation = 2.0
+
+# TrueSkill's parameters, passed to the plugin on every call. beta is prior_sigma/2, tau is
+# prior_sigma/100 -- the dynamics factor that re-opens a settled version's uncertainty over time.
+ts_beta             = 4.166666666666667
+ts_tau              = 0.08333333333333333
+ts_draw_probability = 0.10
+
+# --- admission (layer 08 §11, Jodi's fourth clock). NOT HERE, ON PURPOSE: adapter_ops_max and
+# flop_caps, which are the GAME's, read from games.manifest (decision 38); and the size-class
+# thresholds, which are platform-wide and live in the judging task.
+
+# Where a release's two assets -- model.onnx and adapter.json, decision 17 -- are fetched from. A
+# deployment fact rather than policy; what may actually be dialled is AXON_FETCH_ALLOW_HOSTS on the
+# admission loader, the one process with an allowlist.
+release_base = "${RELEASE_BASE:-https://github.com/}"
+
+# Submissions one run may claim; how long a claim holds before another run may re-claim; attempts
+# before TIMED_OUT. The bound is `zstd -19` on 96 MiB of initializers, not inference. Verification
+# only -- a trial row never times out the candidate; that is count's repair_cap.
+admit_batch        = 4
+admit_timeout_s    = 180
+admit_attempts_max = 3
+
+# Per-observation deadline passed to /validate.
+admit_deadline_ms = 5000
+
+# The re-validation sweep's batch (layer 08 §9). Zero disables it.
+revalidate_batch = 4
+
+# The season's opset pin and the operator allowlist -- DESIGN.md §5's ops. The loader REPORTS a
+# graph's operators and this list JUDGES them, which keeps a policy change out of axon's release
+# cycle.
+opset_min = 13
+opset_max = 19
+op_allowlist = [
+  "Abs", "Add", "And", "ArgMax", "ArgMin", "AveragePool", "BatchNormalization", "Cast", "Ceil",
+  "Clip", "Concat", "Constant", "ConstantOfShape", "Conv", "Div", "Elu", "Equal", "Erf", "Exp",
+  "Expand", "Flatten", "Floor", "Gather", "GatherElements", "Gemm", "GlobalAveragePool",
+  "GlobalMaxPool", "Greater", "HardSigmoid", "Identity", "InstanceNormalization", "LayerNormalization",
+  "LeakyRelu", "Less", "Log", "LogSoftmax", "MatMul", "Max", "MaxPool", "Mean", "Min", "Mul", "Neg",
+  "Not", "Or", "Pad", "Pow", "PRelu", "Range", "Reciprocal", "ReduceMax", "ReduceMean", "ReduceMin",
+  "ReduceSum", "Relu", "Reshape", "Resize", "Selu", "Shape", "Sigmoid", "Sign", "Slice", "Softmax",
+  "Softplus", "Split", "Sqrt", "Squeeze", "Sub", "Sum", "Tanh", "Tile", "Transpose", "Unsqueeze",
+  "Where",
+]
+
+# ------------------------------------------------------------------------------- KALAM
+# Layer 03 §6's numbers. PROVISIONAL, but measured rather than guessed. The wave workflow reads
+# them by these names, so renaming one breaks the wave rather than defaulting it.
+
+# The engine this server plays, and the only rows the wave may claim. Equal by construction to the
+# digest of the vendored cartridge plugin: orion/entrypoint.sh derives it from the component, and
+# the loader writes the same value into games.active_engine_digest. The claim statement filters on
+# it, so a server running an old engine drains its own rows across a rolling deploy and takes none
+# of the new ones (finding 5 option A).
+engine_digest = "${KALAM_ENGINE_DIGEST}"
+
+# K, rows per wave (decision 5). Bounded by blast radius -- a dead replica replays K matches from
+# turn zero -- not by any measured ceiling; 16 is a choice against a real class mix.
+wave_k = 16
+
+# N, turns between lease renewals (decision 19), and the lease itself, about 9x the renew interval.
+# A dead replica's rows return to the queue within one lease plus one poll.
+renew_every_n_turns = 30
+lease_seconds       = 300
+
+# The turn clock, enforced by the loader, and the cap on a match's length. Both are the GAME's,
+# from ants/cartridge.json `limits`, repeated here because a workflow cannot read the manifest.
+# max_turns must stay below [engine] max_loop_iterations.
+turn_ms   = 1000
+max_turns = 1000
+
+# The game's budgets.adapter_ops_max, passed on every /play call -- a parameter, which is what
+# keeps the loader game-agnostic. Decision 6: measured at 1,000,000.
+budget_ops = 1000000
+
+# Missed turn clocks before a seat forfeits, counted cumulatively. Equal to forfeit_strikes above.
+strike_ceiling = 5
+
+# Refusals for want of loader memory before a row is unplayable. Distinct from lapses: memory
+# pressure is transient and a row should outlive it.
+refusal_ceiling = 5
+
+# Where a replay lands: <prefix>/<match_id>/<claim_token>.json -- it names the ATTEMPT, so a stale
+# attempt's blob is an orphan under its own key rather than a replacement (finding 7d).
+replay_prefix = "replays"
+
+# The replay store's endpoint, and the ONE value that must equal the kalam-blobs-put connector's
+# base URL: the wave subtracts this string from the presigned URL to get a path for http_call.
+# Soma's soma-blobs presigns GETs against the same store.
+blob_endpoint = "${R2_ENDPOINT}"
+
+# How often the claim channel looks for work (decision 25). The channel's cron expression carries
+# the real value; this is here so a reader sees it beside the rest.
+poll_secs = 5
+
+# ------------------------------------------------------------------------------- plugins
+# Off by default in Orion. Jodi's tb.rating and tb.pairing and Kalam's tb.ants all need it; without
+# this they load as rows and quarantine the clocks that name them. `cache_dir` is deliberately
+# absent: reserved in 1.7.0, and a non-empty value is REFUSED at startup. Every ceiling is the host
+# default -- 1 MiB request and response, 5 s, 64 MiB of linear memory; wave_state at K=64 is 55% of
+# the request ceiling on the largest preset.
+[plugins]
+enabled = true
+
+# Signing. Empty until P6 mints the keys: with public_keys non-empty an upload must carry a
+# signature over the component digest by one of them, verified again at every load. The cartridge
+# is the one place a third party's code enters the platform, so this must be non-empty before a
+# second cartridge by an outsider ships (P7).
+[plugins.trust]
+public_keys = []
+
+[cron]
+# How long an occurrence in hand may keep running after SIGTERM. Above the two [server] numbers,
+# as it must be; see the note there for why all three are short on this server.
+shutdown_timeout_secs = ${ORION_CRON_SHUTDOWN_SECS:-15}
+
+[engine]
+# Bounds the wave workflow's per-turn loop. Above max_turns by a wide margin: hitting this is a
+# runaway, not a long match.
+max_loop_iterations = 10000
+
+# Governs the portable data dialect. Soma reaches Postgres through raw db_read instead, so these do
+# not bind its endpoints; set so a dialect task added later inherits sane numbers.
+[query]
+default_limit = 50
+max_limit     = 200
+
+# Trace persistence. `sync` writes the trace inside the request path -- 2.1 ms median on GET
+# /v1/games -- and is the strongest durability at a volume where the cost is nothing. The cron
+# channels override this per channel: tb-wave and Jodi's four clocks carry `errors_only: true`, so
+# a clean wave of hundreds of turns writes no trace and a broken one is kept in full.
+[trace_storage]
+mode = "sync"
