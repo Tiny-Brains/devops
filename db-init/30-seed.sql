@@ -19,6 +19,18 @@ INSERT INTO games (slug, name, active_engine_digest)
 VALUES ('ants', 'Ants', 'sha256:0000000000000000000000000000000000000000000000000000000000000000')
 ON CONFLICT (slug) DO NOTHING;
 
+-- ---------------------------------------------------------------------- season 1
+
+-- Layer 06: every version belongs to a season, so a game needs one before anything can be
+-- submitted. Season 1 of a dev stack opens now and takes submissions for a year; it pins the
+-- placeholder digest, which the loader's patch overwrites on the first `up` exactly as it does on
+-- games. Later seasons are the admin's (POST /v1/games/{game}/seasons) and carry the baselines.
+INSERT INTO seasons (game_id, number, engine_digest, submissions_open_at, submissions_close_at)
+SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year'
+  FROM games g
+ WHERE g.slug = 'ants'
+   AND NOT EXISTS (SELECT 1 FROM seasons s WHERE s.game_id = g.id);
+
 -- ----------------------------------------------------------------- the baselines
 
 -- Baselines are competitors (DESIGN.md §7): each one is a user, so that three of them can be told
@@ -47,10 +59,10 @@ ON CONFLICT (handle) DO NOTHING;
 -- All three are 'nano': they are rule-based policies with no weights to speak of. A candidate in
 -- a larger class therefore matches no baseline on class and falls through to the "any baseline,
 -- fewest in flight" arm of the trial insert, which is the intended behaviour.
-INSERT INTO models (owner_id, game_id, version, repo, release_tag, commit_sha, status,
+INSERT INTO models (owner_id, game_id, season_id, version, repo, release_tag, commit_sha, status,
                     weight_class, size_bytes, param_count, flops_estimate,
                     weights_hash, adapter_hash, evaluator_digest)
-SELECT u.id, g.id, 1,
+SELECT u.id, g.id, s.id, 1,
        'tinybrains/ants-baselines', 'v0-placeholder', NULL, 'active',
        'nano', 0, 0, 0,
        'sha256:placeholder-' || u.handle,
@@ -58,6 +70,7 @@ SELECT u.id, g.id, 1,
        'placeholder'
   FROM users u
   CROSS JOIN games g
+  JOIN seasons s ON s.game_id = g.id AND s.closed_at IS NULL      -- the live season: season 1
  WHERE u.role = 'baseline' AND g.slug = 'ants'
    AND NOT EXISTS (SELECT 1 FROM models m WHERE m.owner_id = u.id AND m.game_id = g.id);
 

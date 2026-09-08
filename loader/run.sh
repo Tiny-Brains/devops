@@ -11,10 +11,15 @@
 #
 #   * the `kalam` role's password    -- the migration creates it with LOGIN and no password, so the
 #                                       committed schema ships no secret; the credential is ours
-#   * games.active_engine_digest     -- what pair stamps on every row, and the ONLY rows the wave
-#                                       claims. Derived from the vendored component, never typed, so
-#                                       it equals the plugin's digest by construction. A mismatch is
-#                                       not an error anywhere: the wave claims nothing, for ever
+#   * the engine digest              -- games.active_engine_digest is what the deploy declares, and the
+#                                       LIVE SEASON pins a copy that pair stamps on every row, the ONLY
+#                                       rows the wave claims (layer 06 §4.4). Derived from the vendored
+#                                       component, never typed, so it equals the plugin's digest by
+#                                       construction. A mismatch is not an error anywhere: the wave
+#                                       claims nothing, for ever. By default the write is a PATCH --
+#                                       behaviour-preserving, the live season takes it too; with
+#                                       ENGINE_RELEASE=1 it is a RELEASE -- a rules change -- which is
+#                                       REFUSED while a season is live and fails this script loudly
 #   * games.manifest and
 #     games.reference_observations   -- what admission validates a submission against; without them
 #                                       tb-admit releases every claim MANIFEST_INCOMPLETE
@@ -67,13 +72,43 @@ ALTER ROLE kalam WITH LOGIN PASSWORD :'pw';
 SQL
 
   DIGEST=$(engine_digest)
-  echo "==> declaring the engine $DIGEST"
-  # Only `pending` rows are re-stamped. A claimed, running or finished row records the engine it
-  # was actually played on and must never be rewritten -- that record is what makes a skew visible.
-  psql_db -v d="$DIGEST" <<'SQL'
-UPDATE games SET active_engine_digest = :'d' WHERE active_engine_digest IS DISTINCT FROM :'d';
-UPDATE matches SET engine_digest = :'d' WHERE status = 'pending' AND engine_digest IS DISTINCT FROM :'d';
+  if [ "${ENGINE_RELEASE:-0}" = "1" ]; then
+    echo "==> releasing the engine $DIGEST (a rules change: only between seasons)"
+    # 06 §5.3: a release may not enter a live season -- its rows all name the old digest, so the new
+    # replicas would claim nothing and the season would stall in silence. Zero rows means refuse.
+    n=$(psql -X "$DB" -At -v d="$DIGEST" <<'SQL'
+WITH g AS (
+    UPDATE games g SET active_engine_digest = :'d'
+     WHERE NOT EXISTS (SELECT 1 FROM seasons s WHERE s.game_id = g.id AND s.closed_at IS NULL)
+ RETURNING id)
+SELECT count(*) FROM g;
 SQL
+)
+    if [ "${n:-0}" -eq 0 ]; then
+      echo "REFUSED: a season is live. Ask the admin to close it (POST /v1/games/{game}/seasons/current/close), or roll the engine back." >&2
+      exit 1
+    fi
+  else
+    echo "==> declaring the engine $DIGEST (a patch: the live season takes it too)"
+    # A patch is behaviour-preserving, so the live season keeps its ratings and takes the new digest
+    # (06 §5.3); the roster epoch bumps so a pair run mid-plan halts and re-reads. Only `pending`
+    # rows of the live season are re-stamped -- kinder to a dev stack than letting withdraw retire
+    # them and pair re-insert, and the same result. A claimed, running or finished row records the
+    # engine it was actually played on and must never be rewritten -- that record is what makes a
+    # skew visible.
+    psql_db -v d="$DIGEST" <<'SQL'
+UPDATE games SET active_engine_digest = :'d' WHERE active_engine_digest IS DISTINCT FROM :'d';
+WITH s AS (
+    UPDATE seasons s SET engine_digest = :'d'
+     WHERE s.closed_at IS NULL AND s.engine_digest <> :'d'
+ RETURNING s.id)
+UPDATE clocks c SET epoch = c.epoch + 1, updated_at = now() FROM s WHERE c.key = 'roster';
+UPDATE matches m SET engine_digest = :'d'
+  FROM seasons s
+ WHERE s.id = m.season_id AND s.closed_at IS NULL
+   AND m.status = 'pending' AND m.engine_digest IS DISTINCT FROM :'d';
+SQL
+  fi
 
   echo "==> registering the cartridge"
   # The manifest is the copy vendored beside the component, so the budgets admission judges by are
@@ -96,6 +131,7 @@ SQL
 UPDATE games SET manifest = :'m'::jsonb, reference_observations = :'o'::jsonb WHERE slug = :'g';
 SQL
   psql -X "$DB" -At -c "SELECT '    ' || slug || ': engine ' || left(active_engine_digest, 19) || '..., adapter_ops_max=' || (manifest -> 'budgets' ->> 'adapter_ops_max') || ', ' || jsonb_array_length(reference_observations) || ' observation(s)' FROM games"
+  psql -X "$DB" -At -c "SELECT '    ' || g.slug || ': season ' || s.number || ' ' || CASE WHEN s.closed_at IS NOT NULL THEN 'closed' WHEN now() < s.submissions_open_at THEN 'scheduled' WHEN now() < s.submissions_close_at THEN 'open' ELSE 'settling' END || ', engine ' || left(s.engine_digest, 19) || '..., submissions ' || to_char(s.submissions_open_at, 'YYYY-MM-DD') || ' to ' || to_char(s.submissions_close_at, 'YYYY-MM-DD') FROM seasons s JOIN games g ON g.id = s.game_id ORDER BY (s.closed_at IS NULL) DESC, s.number DESC LIMIT 1"
 
   echo "==> the replay bucket"
   # S3 PUT Bucket, signed with sigv4 by curl itself. 200 is created, 409 is BucketAlreadyOwnedByYou.

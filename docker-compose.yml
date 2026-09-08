@@ -175,6 +175,8 @@ services:
       - ../axon/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
     environment:
       ORION_ADMIN: http://orion:8080/api/v1/admin
+      # 1 declares the vendored engine as a rules change, which is refused while a season is live (06 §5.3)
+      ENGINE_RELEASE: ${ENGINE_RELEASE:-0}
       LOADER_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
       KALAM_DB_PASSWORD: ${KALAM_DB_PASSWORD:-kalam-dev-secret}
       KALAM_ENGINE_DIGEST: ${KALAM_ENGINE_DIGEST:-}

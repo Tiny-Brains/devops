@@ -61,6 +61,12 @@ oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github
 # plain-http stack sets false; anything behind TLS must be true.
 cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
 
+# Layer 06 rule 3: the next season's submission window may open no sooner than this many days
+# after the previous season closed. Read by POST /v1/games/{game}/seasons. Soma also reads
+# prior_mu and prior_sigma from Jodi's block below, for the baselines it carries into a new season;
+# an instance that ran Soma without Jodi would need its own copy, equal to Jodi's.
+season_gap_days    = ${SEASON_GAP_DAYS:-1}
+
 # ------------------------------------------------------------------------------- JODI
 # 02-jodi.md §9's numbers, every one PROVISIONAL: policy guesses only a running ladder can tune.
 # They live here rather than in the definitions because a definition is versioned and

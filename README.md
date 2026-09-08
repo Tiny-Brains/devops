@@ -82,7 +82,7 @@ independently of the wave, Kalam gets a service here with a config of its own �
 **One loader, and it runs on every `up`.** A fresh database used to need three hand-run scripts,
 in order, before a match would play; each was an idempotent statement, so now the `loader` runs
 them every time and there is no order to remember: the `kalam` role's password,
-`games.active_engine_digest` (plus a re-stamp of `pending` rows), `games.manifest` with
+`games.active_engine_digest` and the live season's copy of it (plus a re-stamp of `pending` rows) — a *patch*; with `ENGINE_RELEASE=1` a *release*, which is refused while a season is live (layer 06 §5.3) — `games.manifest` with
 `games.reference_observations`, and the replay bucket. Then it installs soma, jodi and kalam by
 running each repo's own `scripts/load-package.sh`. After editing any package:
 
