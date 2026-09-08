@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# STEP 6 OF THE DEPLOY -- the engine cutover. Layer 07 §9, decision 44.
+# STEP 6 OF THE DEPLOY -- the engine cutover. docs/deployment.md §9, decision 44.
 #
 #   devops/scripts/declare-engine.sh [--release] [sha256:DIGEST]
 #
@@ -23,7 +23,7 @@
 #   * it asserts nothing about the fleet. Declaring a digest no replica carries gives the ladder a
 #     queue nobody can claim, and NOTHING ERRORS: pair keeps inserting, the rows sit `pending`, and
 #     every replica stays healthy and idle. That is the failure this script's preflight exists to
-#     prevent, and it is the same shape as layer 07 §8.2's invisible capacity.
+#     prevent, and it is the same shape as docs/deployment.md §8.2's invisible capacity.
 #
 # THE PREFLIGHT. Orion 1.7.0's /health reports each loaded plugin's DIGEST, not merely its name:
 #
@@ -136,7 +136,7 @@ if [ "$carriers" -eq 0 ]; then
   echo "Declaring it now would stamp every new row with an engine nobody can claim: pair keeps" >&2
   echo "inserting, the queue grows, every replica stays healthy and idle, and nothing errors." >&2
   echo "Load the new package into at least one replica first -- that is step 5, and it comes" >&2
-  echo "before this one for exactly this reason (layer 07 §9, decision 44)." >&2
+  echo "before this one for exactly this reason (docs/deployment.md §9, decision 44)." >&2
   exit 1
 fi
 echo "    $carriers replica(s) will claim, $drainers will drain"
@@ -164,7 +164,7 @@ psql -X "$DB" -At -c "
 SELECT '    ' || count(*) || ' in flight on ' || left(engine_digest, 19) || '...'
   FROM matches WHERE status IN ('claimed', 'running') GROUP BY engine_digest"
 
-# ---------------------------------------------------------------- THE SWITCH -- layer 07 §9
+# ---------------------------------------------------------------- THE SWITCH -- docs/deployment.md §9
 #
 # Three writes, one transaction, and deliberately NOT chained through one another so a re-run
 # repairs whichever half lagged:

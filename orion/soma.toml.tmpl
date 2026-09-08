@@ -1,5 +1,5 @@
 # Orion server config for the SOMA+JODI unit: the REST surface and the four clocks, in CLUSTER
-# MODE. Requires 1.7.0. Layer 07 §3 and §4.1; the Kalam half is kalam.toml.tmpl.
+# MODE. Requires 1.7.0. docs/deployment.md §3 and §4.1; the Kalam half is kalam.toml.tmpl.
 #
 # Every ${NAME:-default} below is substituted by orion-server from the container's environment
 # before the file is parsed -- Orion's own config syntax -- so one image serves every environment
@@ -10,9 +10,9 @@
 # `orion-server clippy <package> -c soma.toml.tmpl` read it with the defaults applied.
 #
 # TWO PACKAGES, ONE [vars] BLOCK, SECTIONED BY OWNER. This was one file for all three packages
-# until layer 07; Kalam's section moved to kalam.toml.tmpl unchanged, which is exactly what the old
+# until docs/deployment.md; Kalam's section moved to kalam.toml.tmpl unchanged, which is exactly what the old
 # file's header promised would happen. What the split creates is a value in TWO files that must
-# agree -- there are three, they are listed in layer 07 §3, and scripts/check-configs.sh asserts
+# agree -- there are three, they are listed in docs/deployment.md §3, and scripts/check-configs.sh asserts
 # them. A rule that lives only in a comment is one rebase from being wrong.
 
 [server]
@@ -23,7 +23,7 @@ port = 8080
 # the pattern -- so the "/v1" prefix appears in both places. Jodi is cron only and binds no route.
 data_mounts = ["/v1"]
 
-# THE DRAIN -- layer 07 §6.2. This unit sits behind a load balancer and serves requests, which is
+# THE DRAIN -- docs/deployment.md §6.2. This unit sits behind a load balancer and serves requests, which is
 # exactly what shutdown_drain_secs is for: /readyz flips to 503, and the node keeps serving for
 # this fixed period so requests the balancer routes here during its own poll interval still
 # succeed. Thirty seconds is Orion's default and the right order for an LB poll.
@@ -36,7 +36,7 @@ data_mounts = ["/v1"]
 shutdown_drain_secs         = ${ORION_SHUTDOWN_DRAIN_SECS:-30}
 shutdown_force_timeout_secs = ${ORION_SHUTDOWN_FORCE_SECS:-30}
 
-# CLUSTER MODE IS A REQUIREMENT HERE, NOT A SCALING CHOICE -- layer 07 §4.1.
+# CLUSTER MODE IS A REQUIREMENT HERE, NOT A SCALING CHOICE -- docs/deployment.md §4.1.
 #
 # Jodi's four clocks are cluster-wide singletons, and a `forbid` singleton is a ROW in the state
 # database held by one occurrence at a time. So "cluster-wide" is the same thing as
@@ -77,21 +77,21 @@ oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github
 # Whether the session and oauth-state cookies carry Secure. Must substitute to a bare TOML boolean;
 # orion/entrypoint.sh normalises SOMA_COOKIE_SECURE (0/false/no -> false, anything else -> true)
 # before the server reads it. Browsers will not store a Secure cookie from an http:// origin, so a
-# plain-http stack sets false; anything behind TLS must be true. Layer 07 §11: this is the first
+# plain-http stack sets false; anything behind TLS must be true. docs/deployment.md §11: this is the first
 # thing that must be true of any origin that is not loopback.
 cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
 
-# Layer 06 rule 3: the next season's submission window may open no sooner than this many days
+# jodi/docs/rating-and-seasons.md rule 3: the next season's submission window may open no sooner than this many days
 # after the previous season closed. Read by POST /v1/games/{game}/seasons. Soma also reads
 # prior_mu and prior_sigma from Jodi's block below, for the baselines it carries into a new season;
 # THE DAY SOMA GETS A SERVER OF ITS OWN it needs its own copy, equal to Jodi's, and
-# scripts/check-configs.sh already has that fourth case in it (layer 07 §16.4).
+# scripts/check-configs.sh already has that fourth case in it (docs/deployment.md §16.4).
 season_gap_days    = ${SEASON_GAP_DAYS:-1}
 
 # ------------------------------------------------------------------------------- JODI
-# 02-jodi.md §9's numbers, every one PROVISIONAL: policy guesses only a running ladder can tune.
+# jodi/docs/design.md §9's numbers, every one PROVISIONAL: policy guesses only a running ladder can tune.
 # They live here rather than in the definitions because a definition is versioned and
-# content-hashed -- changing a pairing rate should not be a new workflow version. Layer 06
+# content-hashed -- changing a pairing rate should not be a new workflow version. jodi/docs/rating-and-seasons.md
 # finalises the rating numbers; when one must change without a deploy they move to a `policies`
 # table (jodi-gaps 4.7).
 
@@ -115,7 +115,7 @@ presets = [
 count_batch       = 50
 pair_depth_target = 64
 
-# The in-flight policy (decision 1, 02-jodi.md §4): `burst` matches at once for a new version,
+# The in-flight policy (decision 1, jodi/docs/design.md §4): `burst` matches at once for a new version,
 # `steady_cap` once placed, none of its own once its sigma is at or below `settled_sigma`.
 burst         = 8
 steady_cap    = 2
@@ -127,9 +127,9 @@ cross_class_fraction = 0.20
 # Platform failures on one candidate before it is refused UNPLAYABLE.
 repair_cap = 3
 
-# Missed turn clocks before a seat forfeits (DESIGN.md §7). Kalam APPLIES this as strike_ceiling
+# Missed turn clocks before a seat forfeits (the platform design §7). Kalam APPLIES this as strike_ceiling
 # in kalam.toml.tmpl; count reads its consequences off the row. THE TWO MUST STAY EQUAL, and since
-# layer 07 they are in two files -- scripts/check-configs.sh asserts it. A disagreement makes count
+# docs/deployment.md they are in two files -- scripts/check-configs.sh asserts it. A disagreement makes count
 # judge a trial by a rule the wave did not play by.
 forfeit_strikes = 5
 
@@ -147,7 +147,7 @@ ts_beta             = 4.166666666666667
 ts_tau              = 0.08333333333333333
 ts_draw_probability = 0.10
 
-# --- admission (layer 08 §11, Jodi's fourth clock). NOT HERE, ON PURPOSE: adapter_ops_max and
+# --- admission (jodi/docs/admission.md §11, Jodi's fourth clock). NOT HERE, ON PURPOSE: adapter_ops_max and
 # flop_caps, which are the GAME's, read from games.manifest (decision 38); and the size-class
 # thresholds, which are platform-wide and live in the judging task.
 
@@ -166,10 +166,10 @@ admit_attempts_max = 3
 # Per-observation deadline passed to /validate.
 admit_deadline_ms = 5000
 
-# The re-validation sweep's batch (layer 08 §9). Zero disables it.
+# The re-validation sweep's batch (jodi/docs/admission.md §9). Zero disables it.
 revalidate_batch = 4
 
-# The season's opset pin and the operator allowlist -- DESIGN.md §5's ops. The loader REPORTS a
+# The season's opset pin and the operator allowlist -- the platform design §5's ops. The loader REPORTS a
 # graph's operators and this list JUDGES them, which keeps a policy change out of axon's release
 # cycle.
 opset_min = 13
@@ -195,7 +195,7 @@ op_allowlist = [
 #
 # THE ADMIN CREDENTIAL IS THE TRUST ROOT FOR INSTALLING ANYTHING. It reads and writes connector
 # secrets and can rewrite any workflow, so it outranks the plugin signature above -- a signature is
-# a check that survives the upload, not a second principal. Layer 07 §11 gates this on "before
+# a check that survives the upload, not a second principal. docs/deployment.md §11 gates this on "before
 # anything is reachable off loopback": locally every admin port is bound to 127.0.0.1, and the
 # moment a loader has to reach a replica across a network that stops being true.
 #
@@ -213,7 +213,7 @@ enabled = true
 # Signing. This unit loads only plugins we wrote -- tb.rating and tb.pairing; the cartridge, which
 # is the one place a third party's code enters the platform, loads on Kalam. The list is non-empty
 # on BOTH units on purpose: a half-configured trust posture is worse than none, because it is the
-# unchecked node you forget. Layer 07 §11.
+# unchecked node you forget. docs/deployment.md §11.
 #
 # Same mechanism as Kalam's block: a detached Ed25519 signature over the digest string
 # `sha256:<64 hex>`, verified at upload and again at every load. Minted by
@@ -227,7 +227,7 @@ public_keys = ["${TB_TRUST_PUBLIC_KEY}"]
 
 [cron]
 # How long shutdown waits for an in-flight occurrence. An INNER deadline under
-# server.shutdown_force_timeout_secs -- layer 07 §6.1 -- so it can only ever make the wait shorter,
+# server.shutdown_force_timeout_secs -- docs/deployment.md §6.1 -- so it can only ever make the wait shorter,
 # never longer. Jodi's clocks are seconds of SQL, so a minute is generous.
 shutdown_timeout_secs = ${ORION_CRON_SHUTDOWN_SECS:-60}
 

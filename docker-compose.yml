@@ -1,5 +1,5 @@
 # TinyBrains local stack: TWO Orion units, a loader that installs into both, and the processes
-# that are not Orion. Layer 07 §2 is the topology this file is; §14's build order is why it exists
+# that are not Orion. docs/deployment.md §2 is the topology this file is; §14's build order is why it exists
 # locally before it exists anywhere else.
 #
 # This directory is THE DEPLOYMENT SURFACE, and that is the whole point of it. soma/, jodi/ and
@@ -35,7 +35,7 @@
 # admission instance mirrors what it verified under the bytes' hash; a replica fetches by that
 # hash. Two stores would mean admission succeeds and every match the version is then paired for
 # fails at the residency barrier -- quietly, and a long way from the cause. Locally that is one
-# volume; ACROSS HOSTS THERE IS NO SHARED VOLUME, which is why layer 07 §8.1 makes S3/R2 with
+# volume; ACROSS HOSTS THERE IS NO SHARED VOLUME, which is why docs/deployment.md §8.1 makes S3/R2 with
 # SigV4 a precondition for the fleet rather than an optimisation. They are separate processes
 # because the binary refuses to be both: a replica's fetch allowlist is empty whatever the
 # environment says, and admission answers /play with a 404.
@@ -144,9 +144,9 @@ services:
 
       # Two connectors, two credentials. Soma and Jodi share the owner role for now -- Jodi writes
       # most of the schema, and a dedicated `jodi` role with exactly those grants is worth doing
-      # the way `kalam` was (layer 07 §10, still owed).
+      # the way `kalam` was (docs/deployment.md §10, still owed).
       SOMA_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
-      # Jodi's OWN role since layer 07 §10, not the schema owner: SELECT where it reads, INSERT and
+      # Jodi's OWN role since docs/deployment.md §10, not the schema owner: SELECT where it reads, INSERT and
       # UPDATE only where it writes, no DELETE anywhere, and nothing at all on `sessions`. The
       # connector's `operations: {delete: false}` is the config half of that; this is the half that
       # survives a config edit.
@@ -171,10 +171,10 @@ services:
       # nothing happened. Set to 1 (or drop it) the moment the app is behind TLS.
       SOMA_COOKIE_SECURE: "${SOMA_COOKIE_SECURE:-0}"
 
-      # The base admission builds a release's two asset URLs on (layer 08 §5, decision 17).
+      # The base admission builds a release's two asset URLs on (jodi/docs/admission.md §5, decision 17).
       RELEASE_BASE: ${RELEASE_BASE:-https://github.com/}
 
-      # Layer 06 rule 3: how long after a season closes the next one may open. The config carries
+      # jodi/docs/rating-and-seasons.md rule 3: how long after a season closes the next one may open. The config carries
       # the default, but orion-server substitutes ${SEASON_GAP_DAYS} from THIS container's
       # environment -- so a value only in .env never reaches it, and the gap stays 1 whatever .env
       # says. A dev stack that wants to reopen immediately sets 0.
@@ -187,7 +187,7 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
 
       # This unit serves requests behind a balancer, so the drain window is what it is for.
-      # Layer 07 §6.2's table.
+      # docs/deployment.md §6.2's table.
       ORION_SHUTDOWN_DRAIN_SECS: ${SOMA_SHUTDOWN_DRAIN_SECS:-30}
       ORION_SHUTDOWN_FORCE_SECS: ${SOMA_SHUTDOWN_FORCE_SECS:-30}
       ORION_CRON_SHUTDOWN_SECS: ${SOMA_CRON_SHUTDOWN_SECS:-60}
@@ -237,14 +237,14 @@ services:
       # deploy: give kalam-2 the new digest and watch this one drain its own rows and claim none
       # of the new ones. The loader refuses a pin that disagrees with the vendored file.
       KALAM_ENGINE_DIGEST: ${KALAM_1_ENGINE_DIGEST:-}
-      # THE DRAIN -- layer 07 §6.2, and the numbers are not what layer 03 wrote down. drain is a
+      # THE DRAIN -- docs/deployment.md §6.2, and the numbers are not what kalam/docs/design.md wrote down. drain is a
       # FIXED sleep and buys a routeless cron-only node nothing, so it is small; force is the REAL
       # outer bound on a draining wave, because the cron worker is a supervised task and main.rs
       # passes the server key as its deadline. A scale-down costs one WAVE, not one timeout.
       ORION_SHUTDOWN_DRAIN_SECS: ${KALAM_SHUTDOWN_DRAIN_SECS:-5}
       ORION_SHUTDOWN_FORCE_SECS: ${KALAM_SHUTDOWN_FORCE_SECS:-2700}
       ORION_CRON_SHUTDOWN_SECS: ${KALAM_CRON_SHUTDOWN_SECS:-2700}
-    # Above drain + force. compose SIGKILLs the drain if this is short, and layer 03 measured what
+    # Above drain + force. compose SIGKILLs the drain if this is short, and kalam/docs/design.md measured what
     # that costs: rows left `running` with a live lease, no error anywhere, unplayable until the
     # lease lapses. A drain that half works is indistinguishable from one that works.
     stop_grace_period: ${KALAM_STOP_GRACE:-2760s}
@@ -309,7 +309,7 @@ services:
   #
   # It also asserts, per replica, that tb.ants is actually loaded. /readyz goes green as soon as
   # the first generation publishes, so a replica whose package load failed is READY, has no wave
-  # channel, claims nothing, and is INVISIBLE CAPACITY that no dashboard reports (layer 07 §8.2).
+  # channel, claims nothing, and is INVISIBLE CAPACITY that no dashboard reports (docs/deployment.md §8.2).
   #
   # What each load script wants from the environment is listed at the top of that script. The
   # ALLOW_PRIVATE flags exist because compose service names resolve to private addresses, which
@@ -336,7 +336,7 @@ services:
       - ../jodi:/pkg/jodi:ro
       - ../kalam:/pkg/kalam:ro
       # The cartridge repo, for reference/observations.json once it publishes one; until then the
-      # one worst-case observation axon's tests use stands in (design/v2/08-admission.md).
+      # one worst-case observation axon's tests use stands in (jodi/docs/admission.md).
       - ../ants:/pkg/ants:ro
       - ../axon/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
       # The deploy steps that are not `loader` itself, run in this image because this is where the
@@ -411,7 +411,7 @@ services:
 
   # --------------------------------------------------------------------------- the parts that are not Orion
   #
-  # Axon: the Model Loader. One binary, two roles (layer 04 §8). These are the REPLICA role -- it
+  # Axon: the Model Loader. One binary, two roles (axon/docs/design.md §8). These are the REPLICA role -- it
   # fetches by hash, serves /play, and its fetch allowlist is empty whatever the environment says,
   # so a compromised workflow cannot tell it where to pull bytes from. It is not an Orion package
   # and has no channels: the wave reaches it over plain HTTP through the `model-loader` connector,
@@ -432,7 +432,7 @@ services:
     environment:
       AXON_MODE: replica
       AXON_BIND: 127.0.0.1:9090
-      # THE MODEL STORE, S3/SigV4 -- layer 07 §8.1. It replaced the shared `axon-store` volume, and
+      # THE MODEL STORE, S3/SigV4 -- docs/deployment.md §8.1. It replaced the shared `axon-store` volume, and
       # not as an optimisation: the admission instance and every replica must share ONE store, and
       # across hosts there is no shared volume. Locally that is minio; in a deployment, R2.
       AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
@@ -458,7 +458,7 @@ services:
     environment:
       AXON_MODE: replica
       AXON_BIND: 127.0.0.1:9090
-      # THE MODEL STORE, S3/SigV4 -- layer 07 §8.1. It replaced the shared `axon-store` volume, and
+      # THE MODEL STORE, S3/SigV4 -- docs/deployment.md §8.1. It replaced the shared `axon-store` volume, and
       # not as an optimisation: the admission instance and every replica must share ONE store, and
       # across hosts there is no shared volume. Locally that is minio; in a deployment, R2.
       AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
@@ -470,7 +470,7 @@ services:
       AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
     restart: unless-stopped
 
-  # The SECOND role of the same binary: admission (layer 04 §8, layer 08). It differs from the
+  # The SECOND role of the same binary: admission (axon/docs/design.md §8, jodi/docs/admission.md). It differs from the
   # replica in four ways and no others -- it accepts URLs and fetches from allowlisted hosts, it
   # mirrors what it verified into the store inside the /load call, it serves /inspect and
   # /validate, and it refuses /play with a 404 so a confusion of roles is loud. It mounts the SAME

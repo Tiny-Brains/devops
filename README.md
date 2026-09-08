@@ -216,6 +216,7 @@ and plugin trust enforcement are not verified by that result; the production dep
 ## More
 
 - Local references: [Compose topology](docker-compose.yml), [environment contract](.env.example), and [runtime templates](orion/).
-- Competitor documentation is maintained as a separate mdBook; a published guide URL is not configured in this checkout.
+- Design docs: [`docs/architecture.md`](docs/architecture.md) (the whole-system map), [`docs/decisions.md`](docs/decisions.md), [`docs/deployment.md`](docs/deployment.md), [`docs/orion-notes.md`](docs/orion-notes.md).
+- [The competitor guide](https://github.com/Tiny-Brains/docs) — the reader-facing half: the rules, the model format, the adapter dialect, submitting, ranking and seasons. The platform section is the high-level design for someone new to the codebase.
 - Application repositories: [Soma](https://github.com/Tiny-Brains/soma), [Jodi](https://github.com/Tiny-Brains/jodi), [Kalam](https://github.com/Tiny-Brains/kalam), [Axon](https://github.com/Tiny-Brains/axon), [Ants](https://github.com/Tiny-Brains/ants), [Web](https://github.com/Tiny-Brains/web).
 - Apache-2.0: see [LICENSE](LICENSE).

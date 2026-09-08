@@ -1,5 +1,5 @@
 # Orion server config for a KALAM REPLICA: the wave, and nothing else. Requires 1.7.0.
-# Layer 07 §3, §4.2 and §6.2; the Soma+Jodi half is soma.toml.tmpl.
+# docs/deployment.md §3, §4.2 and §6.2; the Soma+Jodi half is soma.toml.tmpl.
 #
 # One of these per replica. Each replica is disposable: it holds no state anything else needs, and
 # a crash costs one wave, replayed from turn zero by the next claim.
@@ -11,8 +11,8 @@ port = 8080
 # NO data_mounts. A replica binds no route -- it is cron only -- and that is the fact the drain
 # numbers below turn on.
 
-# THE DRAIN. Layer 07 §6.1 corrects what the build wrote down here, and the correction is the
-# reason these two numbers are not what layer 03 §6 says.
+# THE DRAIN. docs/deployment.md §6.1 corrects what the build wrote down here, and the correction is the
+# reason these two numbers are not what kalam/docs/design.md §6 says.
 #
 # Read out of orion-server's main.rs, the shutdown sequence is:
 #   1. /readyz -> 503
@@ -39,7 +39,7 @@ shutdown_drain_secs         = ${ORION_SHUTDOWN_DRAIN_SECS:-5}
 # THE REAL BOUND ON A WAVE. Above channel_timeout_ms (2 400 s), so the channel gives up first.
 shutdown_force_timeout_secs = ${ORION_SHUTDOWN_FORCE_SECS:-2700}
 
-# NOT CLUSTER MODE, AND THAT IS THE CORRECTNESS HALF -- layer 07 §4.2, decision 41.
+# NOT CLUSTER MODE, AND THAT IS THE CORRECTNESS HALF -- docs/deployment.md §4.2, decision 41.
 #
 # A `forbid` singleton is a ROW in the state database. tb-wave declares
 # {"policy": "forbid", "key": "wave"} -- one wave in flight per replica, which is what K bounds and
@@ -51,7 +51,7 @@ shutdown_force_timeout_secs = ${ORION_SHUTDOWN_FORCE_SECS:-2700}
 # So local SQLite per replica is not a saving over a managed Postgres; it is what makes each
 # replica its own scheduler. Nothing is lost by it, because KALAM'S FENCE IS NOT ORION'S: its
 # mutual exclusion is the database claim on `matches` -- FOR UPDATE SKIP LOCKED over the partial
-# index, leased, with the lapse and reap of layer 01 §4 -- and that is shared state of the only
+# index, leased, with the lapse and reap of soma/docs/schema.md §4 -- and that is shared state of the only
 # kind Kalam needs. Orion's occurrence lease would recover a dead node's OCCURRENCE; the match
 # lease recovers its ROWS, which is the thing that matters, and it already works.
 #
@@ -60,7 +60,7 @@ shutdown_force_timeout_secs = ${ORION_SHUTDOWN_FORCE_SECS:-2700}
 [storage]
 # Disposable by design: this database holds the loaded package and nothing else. Everything that
 # matters is in Postgres. Losing it on a restart costs one package load, which is why the package
-# is installed into each replica at init rather than baked into the image (layer 07 §8.2).
+# is installed into each replica at init rather than baked into the image (docs/deployment.md §8.2).
 url = "sqlite:${ORION_STATE_PATH:-/var/lib/orion/state.db}"
 
 # A single node migrates at boot, and that is what makes orion-server a single-binary install.
@@ -69,20 +69,20 @@ auto_migrate = true
 
 [vars]
 # ------------------------------------------------------------------------------- KALAM
-# Layer 03 §6's numbers. PROVISIONAL, but measured rather than guessed. The wave workflow reads
+# kalam/docs/design.md §6's numbers. PROVISIONAL, but measured rather than guessed. The wave workflow reads
 # them by these names, so renaming one breaks the wave rather than defaulting it.
 
 # The engine this replica plays, and the only rows its wave may claim. DERIVED, never typed:
 # orion/entrypoint.sh hashes the vendored component and exports it, and the loader writes the same
 # value into games.active_engine_digest. The claim statement filters on it, so a replica running an
 # old engine drains its own rows across a rolling deploy and takes none of the new ones (finding 5
-# option A) -- which is what makes the digest the CUTOVER SWITCH of layer 07 §9.
+# option A) -- which is what makes the digest the CUTOVER SWITCH of docs/deployment.md §9.
 #
 # scripts/check-configs.sh refuses a literal digest here. A pinned value that disagrees with the
 # vendored file is the one failure that is silent everywhere: the wave claims nothing, for ever.
 engine_digest = "${KALAM_ENGINE_DIGEST}"
 
-# K, rows per wave. DECISION 5, taken in layer 07 §7.1 as a RESIDENCY BUDGET rather than a
+# K, rows per wave. DECISION 5, taken in docs/deployment.md §7.1 as a RESIDENCY BUDGET rather than a
 # measurement: every candidate ceiling was measured and none binds -- not wave_state against the
 # plugin ceiling, not Orion's per-turn cost, not inference -- but memory at the largest class does.
 #
@@ -111,7 +111,7 @@ max_turns = 1000
 budget_ops = 1000000
 
 # Missed turn clocks before a seat forfeits, counted cumulatively. EQUAL TO forfeit_strikes in
-# soma.toml.tmpl, and since layer 07 that is a value in two files -- scripts/check-configs.sh
+# soma.toml.tmpl, and since docs/deployment.md that is a value in two files -- scripts/check-configs.sh
 # asserts it. Kalam applies it; count reads its consequences off the row.
 strike_ceiling = 5
 
@@ -128,7 +128,7 @@ replay_prefix = "replays"
 # Soma's soma-blobs presigns GETs against the same store.
 blob_endpoint = "${R2_ENDPOINT}"
 
-# How often the claim channel looks for work. DECISION 25, taken in layer 07 §7.2 IN SHAPE ONLY:
+# How often the claim channel looks for work. DECISION 25, taken in docs/deployment.md §7.2 IN SHAPE ONLY:
 # bounded below by claim load (N replicas at interval i issue N/i claims per second against the
 # partial index on `pending`) and above by trial latency (a newly paired row waits up to i before
 # any replica sees it, and that wait is on the front of every trial). Five seconds stands; THE
@@ -148,7 +148,7 @@ poll_secs = 5
 #
 # THE ADMIN CREDENTIAL IS THE TRUST ROOT FOR INSTALLING ANYTHING. It reads and writes connector
 # secrets and can rewrite any workflow, so it outranks the plugin signature above -- a signature is
-# a check that survives the upload, not a second principal. Layer 07 §11 gates this on "before
+# a check that survives the upload, not a second principal. docs/deployment.md §11 gates this on "before
 # anything is reachable off loopback": locally every admin port is bound to 127.0.0.1, and the
 # moment a loader has to reach a replica across a network that stops being true.
 #
@@ -165,7 +165,7 @@ enabled = true
 
 # Signing, and THE CARTRIDGE IS THE ONE PLACE A THIRD PARTY'S CODE ENTERS THE PLATFORM -- which is
 # why this list is non-empty here first and must stay so before a second cartridge by an outsider
-# ships (P7). Layer 07 §11.
+# ships (P7). docs/deployment.md §11.
 #
 # What a non-empty list buys: every plugin upload must carry a detached Ed25519 signature over the
 # DIGEST STRING -- the ASCII `sha256:<64 hex>`, not the component bytes -- and it is verified twice,

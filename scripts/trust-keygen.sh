@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The trust root for plugin components -- layer 07 §11, tracker §3.4.
+# The trust root for plugin components -- docs/deployment.md §11, tracker §3.4.
 #
 #   devops/scripts/trust-keygen.sh [--force]
 #

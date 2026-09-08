@@ -5,7 +5,7 @@
 #
 # WHY THIS EXISTS. The schema is pre-release: `soma/migrations/0001_init.sql` is rewritten in
 # place rather than extended, because nothing is deployed and there is no migration chain worth
-# keeping (design/v2/tracker.md §5.1). But `db-init/` only runs on FIRST initialisation of the
+# keeping (the tracker §5.1). But `db-init/` only runs on FIRST initialisation of the
 # volume, so a developer whose stack predates a rewrite is left running the old tables -- which
 # shows up as `relation "clocks" does not exist` on every count run, not as anything obvious.
 #

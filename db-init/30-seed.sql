@@ -21,7 +21,7 @@ ON CONFLICT (slug) DO NOTHING;
 
 -- ---------------------------------------------------------------------- season 1
 
--- Layer 06: every version belongs to a season, so a game needs one before anything can be
+-- jodi/docs/rating-and-seasons.md: every version belongs to a season, so a game needs one before anything can be
 -- submitted. Season 1 of a dev stack opens now and takes submissions for a year; it pins the
 -- placeholder digest, which the loader's patch overwrites on the first `up` exactly as it does on
 -- games. Later seasons are the admin's (POST /v1/games/{game}/seasons) and carry the baselines.
@@ -33,12 +33,12 @@ SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year'
 
 -- ----------------------------------------------------------------- the baselines
 
--- Baselines are competitors (DESIGN.md §7): each one is a user, so that three of them can be told
+-- Baselines are competitors (the platform design §7): each one is a user, so that three of them can be told
 -- apart on a leaderboard where an entry is displayed as its owner's handle. They never sign in,
 -- which is why github_id is null and why users_human_has_github_id exempts the role.
 --
 -- They exist here because nothing can have a trial opponent until they do: pair's trial insert
--- (02-jodi.md §6.4) seats a verified candidate against `status = 'active'` baseline of its own
+-- (jodi/docs/design.md §6.4) seats a verified candidate against `status = 'active'` baseline of its own
 -- class where one exists, and against any baseline otherwise.
 INSERT INTO users (handle, role) VALUES
     ('baseline-random', 'baseline'),
@@ -49,7 +49,7 @@ ON CONFLICT (handle) DO NOTHING;
 -- One version each, 'active', so the trial insert can find them.
 --
 -- The hashes are placeholders. The baselines' real releases are P3's -- they are submitted as
--- ordinary releases with adapters in the layer 04 dialect, and admission fills these columns for
+-- ordinary releases with adapters in the axon/docs/design.md dialect, and admission fills these columns for
 -- real. Until then the rows exist to make the *pairing* path testable, not the playing one: a
 -- match seating one of these would be claimed by Kalam and failed with HASH_MISMATCH, which is
 -- itself one of the failure walks P5 has to prove. `adapter` is left null on purpose --
@@ -75,8 +75,8 @@ SELECT u.id, g.id, s.id, 1,
    AND NOT EXISTS (SELECT 1 FROM models m WHERE m.owner_id = u.id AND m.game_id = g.id);
 
 -- Two rating rows each -- their class ladder and open -- at the prior, so that a baseline is
--- rated by the matches other people want (02-jodi.md §4) rather than being an unrated void the
--- fold silently drops. The numbers are 02-jodi.md §9's provisional prior_mu and prior_sigma;
+-- rated by the matches other people want (jodi/docs/design.md §4) rather than being an unrated void the
+-- fold silently drops. The numbers are jodi/docs/design.md §9's provisional prior_mu and prior_sigma;
 -- they must stay equal to the [vars] of the same name, since a baseline's first fold reads these
 -- as its own prior.
 INSERT INTO ratings (model_id, ladder, mu, sigma)

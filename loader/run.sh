@@ -13,7 +13,7 @@
 #                                       committed schema ships no secret; the credential is ours
 #   * the engine digest              -- games.active_engine_digest is what the deploy declares, and the
 #                                       LIVE SEASON pins a copy that pair stamps on every row, the ONLY
-#                                       rows the wave claims (layer 06 §4.4). Derived from the vendored
+#                                       rows the wave claims (jodi/docs/rating-and-seasons.md §4.4). Derived from the vendored
 #                                       component, never typed, so it equals the plugin's digest by
 #                                       construction. A mismatch is not an error anywhere: the wave
 #                                       claims nothing, for ever. By default the write is a PATCH --
@@ -26,7 +26,7 @@
 #   * the replay bucket              -- a `finished` row REQUIRES replay_key, so a wave that cannot
 #                                       write a blob cannot finish a match
 #
-# LOAD installs each package into the server that runs it -- layer 07 §2 and §8.2. Since the split
+# LOAD installs each package into the server that runs it -- docs/deployment.md §2 and §8.2. Since the split
 # there are two kinds of target:
 #
 #   SOMA_ORION_ADMIN     one cluster-mode Orion running soma and jodi. Loading against ANY node
@@ -57,7 +57,7 @@ kalam_admins() { echo "$KALAM_ADMINS" | tr ',' ' '; }
 
 psql_db() { psql "$DB" -q -v ON_ERROR_STOP=1 "$@"; }
 
-# The admin plane takes a bearer credential since layer 07 §11. The three packages' own
+# The admin plane takes a bearer credential since docs/deployment.md §11. The three packages' own
 # load-package.sh have read ORION_ADMIN_API_KEY since they were written; this script had not, and
 # its sweep and health calls go to the same plane. Unset is still allowed -- a server with
 # admin_auth disabled accepts either -- so this stays usable against a bare `orion-server`.
@@ -105,7 +105,7 @@ setup() {
   # that looks right and is not expanded fails with a syntax error at the colon.
   #
   # Both roles are created by the migration with LOGIN and no password, so the committed schema
-  # ships no secret and the credential is ours. Jodi got its own role in layer 07 §10: its clocks
+  # ships no secret and the credential is ours. Jodi got its own role in docs/deployment.md §10: its clocks
   # ran as the schema owner while they lived in Soma's package, and an owner that can drop the
   # table it folds ratings into is a grant nobody chose.
   psql_db -v pw="${KALAM_DB_PASSWORD:?KALAM_DB_PASSWORD is required}" <<'SQL'
@@ -157,7 +157,7 @@ SQL
   echo "==> registering the cartridge"
   # The manifest is the copy vendored beside the component, so the budgets admission judges by are
   # the ones the loaded engine was built with. The reference set is what an adapter is validated
-  # AGAINST, and the worst case must be in it or the gate is theatre (layer 04 §3.6): until ants/
+  # AGAINST, and the worst case must be in it or the gate is theatre (axon/docs/design.md §3.6): until ants/
   # publishes reference/observations.json, the one worst-case fixture axon's tests use stands in.
   manifest="${CARTRIDGE_MANIFEST:-$PKG/kalam/plugins/tb-ants/cartridge.json}"
   [ -r "$manifest" ] || { echo "no cartridge manifest at $manifest -- run kalam/scripts/vendor-engine.sh" >&2; exit 1; }
@@ -179,7 +179,7 @@ SQL
 
   echo "==> the buckets"
   # TWO buckets, one credential: replays, written by the wave through a presigned PUT, and the
-  # MODEL STORE, which layer 07 §8.1 moved off the shared volume. The admission axon writes the
+  # MODEL STORE, which docs/deployment.md §8.1 moved off the shared volume. The admission axon writes the
   # model store and every replica reads it -- and they MUST be the same store, or admission
   # succeeds and every match the version is then paired for fails at the residency barrier,
   # quietly and a long way from the cause. Across hosts there is no shared volume, so this is what
@@ -200,7 +200,7 @@ SQL
 # SWEEPING A PACKAGE OFF A SERVER IT NO LONGER BELONGS ON.
 #
 # Each load-package.sh sweeps its OWN tag before re-creating it, which is what makes a reload
-# idempotent. Nothing swept a tag off a server that stopped running it -- and layer 07 is exactly
+# idempotent. Nothing swept a tag off a server that stopped running it -- and docs/deployment.md is exactly
 # that event: orion_state carried the whole three-package install, and after the split `soma` still
 # held pkg:kalam, whose kalam-db connector then failed to load and put /health in `degraded`. The
 # leftovers are not harmless: a channel that cannot resolve its connector is a permanent degraded

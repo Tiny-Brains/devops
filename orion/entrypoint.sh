@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Normalise what the mounted config reads, migrate, and exec orion-server.
 #
-# ONE IMAGE, TWO ROLES. Since layer 07 there are two instance configs -- soma.toml.tmpl and
+# ONE IMAGE, TWO ROLES. Since docs/deployment.md there are two instance configs -- soma.toml.tmpl and
 # kalam.toml.tmpl -- and this script serves both. It does not take a role argument: it asks the
 # config what it needs by looking for the substitutions the config actually contains. A config that
 # stops referencing a value stops paying for it, and neither can drift from the other.
@@ -9,7 +9,7 @@
 # Nothing is loaded here. Orion holds channels, workflows and plugins in its state database and
 # only takes them over the admin API, so installing a package is the `loader` service's job --
 # which is also why this can exec rather than run the server in the background: PID 1 is
-# orion-server, and SIGTERM reaches it directly. That matters more than it looks: layer 03 §5
+# orion-server, and SIGTERM reaches it directly. That matters more than it looks: kalam/docs/design.md §5
 # measured `trap 'kill -TERM $PID'; wait $PID` returning in ZERO seconds with two rows still
 # `running`, because the trap interrupts `wait`, `wait` returns, and the container exits while
 # Orion is still draining. exec has no such hole.

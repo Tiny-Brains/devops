@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The admin credential for every Orion in this stack -- layer 07 §11.
+# The admin credential for every Orion in this stack -- docs/deployment.md §11.
 #
 #   devops/scripts/admin-key.sh [--force]
 #

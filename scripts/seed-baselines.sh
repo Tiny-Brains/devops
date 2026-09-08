@@ -13,7 +13,7 @@
 # The real answer is P5: a baseline is an ordinary submission, admission fetches it from a release,
 # verifies it, and mirrors it to the store by hash. Until admission exists, this does the same job
 # by hand with the two model-and-adapter pairs axon's own test suite uses -- which are real ONNX
-# graphs and real programs in the layer 04 dialect, not stubs. They are randomly initialised, so
+# graphs and real programs in the axon/docs/design.md dialect, not stubs. They are randomly initialised, so
 # they play badly; playing WELL is not what a baseline is for at this stage, and a ladder needs an
 # opponent before it needs a good one.
 #

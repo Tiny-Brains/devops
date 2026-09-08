@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sign every plugin component in the workspace -- layer 07 §11, tracker §3.4.
+# Sign every plugin component in the workspace -- docs/deployment.md §11, tracker §3.4.
 #
 #   devops/scripts/sign-plugins.sh [path/to/key.pem]
 #

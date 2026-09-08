@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Assert what the config split put in two places -- layer 07 §3.
+# Assert what the config split put in two places -- docs/deployment.md §3.
 #
-# Until layer 07 there was one orion.toml.tmpl and one [vars] block, so a value two packages had to
+# Until docs/deployment.md there was one orion.toml.tmpl and one [vars] block, so a value two packages had to
 # agree on agreed by being written once. There are now two templates, and three values live in both
 # or are derived across the boundary. Each one fails SILENTLY when it disagrees:
 #
@@ -11,7 +11,7 @@
 #   prior_mu / prior_sigma              two priors on one ladder. SAFE TODAY, because both readers
 #                                       are in soma.toml.tmpl -- the check is here for the day Soma
 #                                       gets a server of its own, which is the split this whole
-#                                       topology exists to make cheap (layer 07 §16.4)
+#                                       topology exists to make cheap (docs/deployment.md §16.4)
 #   engine_digest is DERIVED            a literal digest in kalam.toml.tmpl is the one failure that
 #                                       is silent everywhere: the wave claims nothing, for ever,
 #                                       and the replica looks healthy doing it
@@ -100,7 +100,7 @@ esac
 # ---- 4. neither unit is left unchecked ---------------------------------------
 # `[plugins.trust] public_keys` empty is not an error anywhere: the node loads whatever it is sent
 # and says nothing. A trust posture that is on for one unit and off for the other is worse than one
-# that is off for both, because the unchecked node is the one nobody remembers. Layer 07 §11.
+# that is off for both, because the unchecked node is the one nobody remembers. docs/deployment.md §11.
 for f in "$SOMA" "$KALAM"; do
   keys=$(grep -A1 '^\[plugins\.trust\]' "$f" | grep '^public_keys' | cut -d= -f2- | tr -d ' ')
   case "$keys" in
@@ -115,7 +115,7 @@ done
 
 # ---- 5. the admin plane is not open -------------------------------------------
 # `admin_auth.enabled = false` is the same shape of silence as an empty trust list: the plane
-# answers everyone and nothing says so. Layer 07 §11 gates it on "before anything is reachable off
+# answers everyone and nothing says so. docs/deployment.md §11 gates it on "before anything is reachable off
 # loopback", which is a date nobody notices passing.
 for f in "$SOMA" "$KALAM"; do
   if ! grep -q '^\[admin_auth\]' "$f"; then
@@ -151,7 +151,7 @@ else
   bad "$SOMA must set auto_migrate = false -- cluster.enabled with auto_migrate is refused at startup"
 fi
 
-# Layer 07 §6.1: the OUTER bound on a draining wave is shutdown_force_timeout_secs, not the cron
+# docs/deployment.md §6.1: the OUTER bound on a draining wave is shutdown_force_timeout_secs, not the cron
 # key, because the cron worker is a supervised task. A force below the cron timeout silently caps
 # the drain -- which is exactly the 30 s the build measured and mis-explained.
 kf=$(var "$KALAM" shutdown_force_timeout_secs); kf=${kf##*:-}; kf=${kf%\}}
@@ -159,7 +159,7 @@ kc=$(var "$KALAM" shutdown_timeout_secs);       kc=${kc##*:-}; kc=${kc%\}}
 if [ -n "$kf" ] && [ -n "$kc" ] && [ "$kf" -ge "$kc" ] 2>/dev/null; then
   ok "kalam drain: force ${kf}s >= cron ${kc}s, so the cron deadline is the one that bites"
 else
-  bad "kalam shutdown_force_timeout_secs (${kf:-?}) is below cron.shutdown_timeout_secs (${kc:-?}) -- the force key is the OUTER deadline, so the wave would be cut at ${kf:-?}s whatever cron says (layer 07 §6.1)"
+  bad "kalam shutdown_force_timeout_secs (${kf:-?}) is below cron.shutdown_timeout_secs (${kc:-?}) -- the force key is the OUTER deadline, so the wave would be cut at ${kf:-?}s whatever cron says (docs/deployment.md §6.1)"
 fi
 
 echo "==> both templates parse"
