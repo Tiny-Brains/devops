@@ -317,6 +317,11 @@ services:
       # one worst-case observation axon's tests use stands in (design/v2/08-admission.md).
       - ../ants:/pkg/ants:ro
       - ../axon/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
+      # The deploy steps that are not `loader` itself, run in this image because this is where the
+      # database and the admin API are both reachable. Mounted rather than baked in, so editing a
+      # step does not need an image rebuild:
+      #   docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
+      - ./scripts:/deploy:ro
     environment:
       # `docker compose --profile fleet up` should also load kalam-2: add its admin to the list,
       #   KALAM_ORION_ADMINS=http://kalam-1:8080/api/v1/admin,http://kalam-2:8080/api/v1/admin
