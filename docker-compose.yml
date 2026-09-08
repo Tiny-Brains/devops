@@ -5,9 +5,17 @@
 # the topology; this file decides how many servers there are and which package goes in which. A
 # modular monolith: modular in the repos, and as monolithic in deployment as it is useful to be.
 #
-# Today that means two servers -- Soma's, which also hosts Jodi's three cron clocks, and (when it
-# exists) Kalam's replicas. The day Soma's REST surface needs to scale independently of the match
-# maker, Jodi gets its own service here and neither repo changes.
+# Today that means two servers -- Soma's, which also hosts Jodi's three cron clocks, and Kalam's
+# replica -- plus the two processes that are not Orion at all: an `axon` beside the replica, and an
+# object store for the replays. The day Soma's REST surface needs to scale independently of the
+# match maker, Jodi gets its own service here and neither repo changes.
+#
+# THE ONE NUMBER THREE SERVICES MUST AGREE ON is the engine digest. `kalam` loads the cartridge as
+# a plugin and Orion keys it by sha256 over the component; `[vars] engine_digest` tells the claim
+# statement which rows to take; and `games.active_engine_digest` is what pair stamps on every row
+# it inserts. A mismatch is not an error anywhere -- the replica just claims nothing, for ever. So
+# KALAM_ENGINE_DIGEST is computed from the file by `kalam/scripts/vendor-engine.sh` and written to
+# the database by `scripts/engine-digest.sh`, and neither is typed by hand.
 #
 #   cd devops
 #   cp .env.example .env     # then fill in the two GitHub values
@@ -28,6 +36,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-soma}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-soma}
+      # Read by 40-kalam-role.sh: the migration creates the role without one.
+      KALAM_DB_PASSWORD: ${KALAM_DB_PASSWORD:-kalam-dev-secret}
     volumes:
       - db-data:/var/lib/postgresql/data
       # Run once, on first initialisation of the volume, in filename order:
@@ -37,6 +47,7 @@ services:
       - ../soma/migrations/0001_init.sql:/docker-entrypoint-initdb.d/20-soma-schema.sql:ro
       - ../soma/migrations/0002_sessions.sql:/docker-entrypoint-initdb.d/25-soma-sessions.sql:ro
       - ./db-init/30-seed.sql:/docker-entrypoint-initdb.d/30-seed.sql:ro
+      - ./db-init/40-kalam-role.sh:/docker-entrypoint-initdb.d/40-kalam-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soma} -d ${POSTGRES_DB:-soma}"]
       interval: 5s
@@ -181,5 +192,120 @@ services:
       - "127.0.0.1:5173:80"
     restart: unless-stopped
 
+  # --------------------------------------------------------------------------- the parts that are not Orion
+  #
+  # Axon: the Model Loader. One binary, two roles (layer 04 §8). This is the REPLICA role -- it
+  # fetches by hash, serves /play, and its fetch allowlist is empty whatever the environment says,
+  # so a compromised workflow cannot tell it where to pull bytes from. The admission instance
+  # (P5) is a second service of the same image with AXON_MODE=admission.
+  #
+  # It is not an Orion package and has no channels: Kalam reaches it over plain HTTP through the
+  # `model-loader` connector, at max_retries: 0, because a retried /play replays a turn.
+  axon:
+    build:
+      context: ../axon
+    environment:
+      AXON_MODE: replica
+      AXON_BIND: 0.0.0.0:9090
+      AXON_STORE_DIR: /var/lib/axon
+      # A Micro-class model is ~30 KB; the budget is what stops a wave of `large` entries from
+      # taking the node down. Small here because the local stack has one model in it.
+      AXON_MEMORY_BUDGET_BYTES: ${AXON_MEMORY_BUDGET_BYTES:-1073741824}
+      AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
+    volumes:
+      # The store, by hash. Layer 07 replaces the directory with R2 through the same trait, at
+      # which point this is a cache rather than the record. Until admission exists, it is seeded
+      # by hand -- see scripts/seed-baselines.sh.
+      - axon-store:/var/lib/axon
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  # MinIO: the replay object store, S3-compatible, so `kalam-blobs` presigns against a real
+  # implementation rather than a placeholder. This is not decoration -- a `finished` row REQUIRES
+  # replay_key (the status-shape check refuses one without it), so a replica that cannot write a
+  # blob cannot finish a match at all, and testing the wave without a store would test everything
+  # except the part that ends it.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${R2_ACCESS_KEY:-tinybrains}
+      MINIO_ROOT_PASSWORD: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+    volumes:
+      - blob-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  # One-shot: create the replay bucket. Same shape as the jodi loader -- something you do to a
+  # service, not something that runs beside it.
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    # One line on purpose: a folded YAML scalar joins these with spaces, and a continuation line
+    # that begins with `&&` becomes a syntax error rather than a pipeline.
+    entrypoint: ["sh", "-c", "mc alias set local http://minio:9000 \"$$MC_USER\" \"$$MC_PASS\" && mc mb --ignore-existing \"local/$$MC_BUCKET\" && echo 'bucket ready'"]
+    environment:
+      MC_USER: ${R2_ACCESS_KEY:-tinybrains}
+      MC_PASS: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+      MC_BUCKET: ${R2_BUCKET:-tinybrains-replays}
+    restart: "no"
+
+  # --------------------------------------------------------------------------- Kalam
+  #
+  # The match player: one replica here, N in a real deployment. It claims up to K pending rows on
+  # its own engine digest, holds their models in the axon beside it, and plays them
+  # turn-synchronously. Its Orion state is a local SQLite file inside the container -- it joins no
+  # cluster and shares nothing, which is what makes it disposable.
+  #
+  # It reaches Postgres as the `kalam` role, which can SELECT matches and match_seats and UPDATE
+  # only its own columns of each. That is not a convention: design/v2/01-verify/run.sh proves
+  # Postgres refuses this role ratings, models, clocks, rating_events, users, and even
+  # matches.rated_at.
+  kalam:
+    build:
+      context: ../kalam
+      args:
+        ORION_VERSION: ${ORION_VERSION:-1.7.0}
+    depends_on:
+      db:
+        condition: service_healthy
+      axon:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./kalam/orion.toml.tmpl:/etc/kalam/orion.toml.tmpl:ro
+    environment:
+      ORION_CONFIG_TEMPLATE: /etc/kalam/orion.toml.tmpl
+      KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
+      MODEL_LOADER_URL: http://axon:9090
+      # Equal by construction to the digest of plugins/tb-ants/tb-ants.wasm. Print it with
+      # `kalam/scripts/vendor-engine.sh`; write it to the database with scripts/engine-digest.sh.
+      KALAM_ENGINE_DIGEST: ${KALAM_ENGINE_DIGEST:?run kalam/scripts/vendor-engine.sh and set it in .env}
+      # db:5432 and axon:9090 are both private addresses, which Orion's SSRF guard refuses unless
+      # the connector opts in. Unlike Soma's, this is a deployment fact rather than a local
+      # convenience: the loader is loopback by design.
+      KALAM_ALLOW_PRIVATE_URLS: "1"
+      R2_ENDPOINT: http://minio:9000
+      R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
+      R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8080"
+
 volumes:
   db-data:
+  axon-store:
+  blob-data:

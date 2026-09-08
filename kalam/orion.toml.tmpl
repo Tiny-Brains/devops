@@ -15,8 +15,31 @@
 host = "0.0.0.0"
 port = 8080
 
-# No data_mounts: Kalam serves no REST surface at all. It is a cron worker with an admin API, and
-# the admin API is loopback-only until admin_auth exists (tracker §12).
+# THE DRAIN IS THREE NUMBERS, NOT ONE, AND THE SMALLEST WINS. `[cron] shutdown_timeout_secs` below
+# is what lets the cron occurrence keep running; these two stop the SERVER from exiting out from
+# under it. Their defaults are ~30 seconds, far less than a match, so a replica configured only
+# with the cron key drains for 30 s and abandons the wave -- measured: a `docker stop` returned in
+# 30 s with two rows still `running`, which then sat unplayable until their leases lapsed. It looks
+# like a clean shutdown from the outside and it is a lost wave.
+#
+# AND `shutdown_drain_secs` IS A FIXED PERIOD, NOT A MAXIMUM. Measured: an idle replica with an
+# empty queue took 27 seconds to stop with it set to 25. So this number is not free insurance --
+# it is exactly what every scale-down costs, every time, whether or not there is a wave in hand.
+#
+# So it is set to the longest match rather than generously: max_turns x turn_ms is 1000 seconds,
+# plus the platform's own ~100 ms a turn and the drain's tail, is about 19 minutes. 1200 seconds
+# buys a little margin. The consequence is that shedding a replica takes twenty minutes, which is a
+# real cost and layer 07's to weigh -- the levers are max_turns, turn_ms, and K (a replica dies with
+# K matches in hand). The orchestrator's grace period must still exceed all of this.
+shutdown_drain_secs = 1200
+shutdown_force_timeout_secs = 1260
+
+# Kalam serves no REST surface of its own: it is a cron worker with an admin API, and the admin API
+# is loopback-only until admin_auth exists (tracker §12). The mount exists so that a DEVELOPMENT
+# channel can drive the wave workflow by hand and see its data -- a cron occurrence returns its
+# output nowhere, and Orion's trace record carries no per-task data, so without this the only way
+# to debug a wave is to infer it from which task failed. Nothing in the package binds to it.
+data_mounts = ["${KALAM_DATA_MOUNT:-/dev}"]
 
 # Orion's own state -- channels, workflows, plugins, cron occurrences, traces. A file on the
 # container's ephemeral disk, deliberately: sharing state with Soma would make a replica a cluster
@@ -32,39 +55,72 @@ url = "sqlite:${KALAM_STATE_DB:-/app/state/kalam.db}"
 # the new replicas exist, and pair stamps it on every match from then on.
 engine_digest = "${KALAM_ENGINE_DIGEST}"
 
-# --- PROVISIONAL, and blocked on measurement. These are the three numbers layer 03 owes, and the
-# wave-turn spike (kalam-gaps 0.6) is what turns them from guesses into values. They are written
-# here so the config is complete and the shape is reviewable, NOT because anyone has measured them.
+# --- The numbers layer 03 §6 fixes. Every one is PROVISIONAL -- only a running ladder tunes them
+# -- but they are no longer guesses: the wave-turn spike measured the platform's side and the real
+# loader measured inference. The names below are layer 03's, and the workflow reads them by these
+# names, so renaming one here breaks the wave rather than defaulting it.
 #
-# K, rows per wave per replica (decision 5). Bounded above by what a turn's wave_state costs
-# against Orion's 1 MiB plugin ceilings and by the channel timeout; bounded below by the loader's
-# economics, since one play call carries the whole wave and a wave of one wastes the batching.
-wave_size = 8
+# K, rows per wave per replica (decision 5). ALL THREE candidate bounds are measured and none binds
+# here: not wave_state against Orion's 1 MiB plugin ceiling (K=64 is 55% of it on the largest
+# preset), not Orion's per-turn cost (~3.0-4.6 ms per match-turn, linear in K), and not inference
+# (axon costs ~1.0 ms a seat, so K=32 is 66 ms against a 1000 ms turn). What is left bounding it is
+# BLAST RADIUS -- a replica death replays K matches from turn zero -- and the class mix, since that
+# measurement is a Micro-class model and the classes go to 64 MiB. So 16 is a choice, and moving it
+# is a deployment decision against a real class mix rather than another measurement.
+wave_k = 16
 
-# N, turns between lease renewals (decision 19). Small enough that a dead replica's rows are
-# reaped promptly, large enough that the renew statement is not most of what the wave does.
-renew_every_turns = 20
+# N, turns between lease renewals (decision 19). <= 33 s between renews at the worst-case turn.
+renew_every_n_turns = 30
 
-# The lease, in seconds. Must comfortably exceed N turns of wall clock, or a live wave reaps
-# itself; must be short enough that a dead replica's rows do not sit unplayable for long.
-lease_secs = 120
+# The lease, in seconds -- about 9x the renew interval. A dead replica's rows return to the queue
+# within one lease plus one poll. Must comfortably exceed N turns of wall clock, or a live wave
+# reaps itself.
+lease_seconds = 300
 
-# The turn clock, enforced by the loader across adapter, inference and adapter. A seat over it is
-# reported timed_out on its row, takes the no-op and a strike, and is never retried.
-turn_ms = 250
+# The turn clock, enforced by the LOADER across adapter, inference and adapter (layer 04 §5). A
+# seat over it is reported timed_out on its row, takes the no-op and a strike, and is never
+# retried. This and max_turns are the GAME's, from ants/cartridge.json `limits` -- not Kalam's to
+# choose, and repeated here only because a workflow cannot read the cartridge manifest.
+turn_ms = 1000
 
-# The cap on a match's length, so a pathological pair cannot hold a wave for ever. Must stay below
-# [engine] max_loop_iterations, which bounds the workflow's loop.
-max_turns = 2000
+# The cap on a match's length. Must stay below [engine] max_loop_iterations, which bounds the
+# workflow's loop, and the workflow's own loop max is max_turns + K because the drain finishes one
+# match per sweep.
+max_turns = 1000
 
-# Missed turn clocks before a seat forfeits (DESIGN.md §7). The same number Soma's [vars] carries:
-# Kalam applies it, count reads its consequences off the row.
-forfeit_strikes = 5
+# The game's budgets.adapter_ops_max, passed on every /play call. A parameter rather than a setting
+# of the loader, which is what keeps that process game-agnostic (layer 04 §4.4). Decision 6:
+# measured at 1,000,000, raised from 200,000 because a real adapter against a real observation
+# said so.
+budget_ops = 1000000
+
+# Missed turn clocks before a seat forfeits (DESIGN.md §7), counted CUMULATIVELY: five missed
+# clocks in a match, not five in a row. The same number Soma's [vars] carries: Kalam applies it,
+# count reads its consequences off the row.
+strike_ceiling = 5
+
+# How many times a row may be refused for want of loader memory before it is unplayable. Distinct
+# from `lapses`, and deliberately: memory pressure is transient and a row should outlive it, while
+# a model no replica can ever hold is a different fact about the model. Layer 01 §4.4's $3.
+refusal_ceiling = 5
+
+# Where a replay lands. The key is <prefix>/<match_id>/<claim_token>.json -- it names the ATTEMPT,
+# so a stale attempt's blob is an orphan under its own key rather than a replacement for the one
+# that counted (finding 7d).
+replay_prefix = "replays"
+
+# The replay store's endpoint, and the ONE value that must equal the kalam-blobs-put connector's
+# base URL. Orion carries no bytes: the wave presigns a PUT and then makes an ordinary http_call
+# to the URL that comes back, and http_call always prefixes its connector's base -- so the
+# workflow subtracts this string from the presigned URL to get a path. `force_path_style` on
+# kalam-blobs is what makes that subtraction exact.
+blob_endpoint = "${R2_ENDPOINT}"
 
 # How often the claim channel looks for work. Decision 25, and the claim-under-load spike
-# (kalam-gaps 0.7) is what sets it: N replicas each running this statement against one partial
-# index is the database load the whole fleet shares.
-poll_secs = 2
+# (kalam-gaps 0.7) is what sets it at N replicas: each one runs the claim against one partial index
+# and that is the database load the whole fleet shares. The channel's cron expression carries the
+# real value; this is here so a reader sees it beside the rest.
+poll_secs = 5
 
 [plugins]
 # The game engine is a plugin. Off by default in Orion, so this must be present before the
@@ -83,9 +139,11 @@ public_keys = []
 # The drain window. On SIGTERM Orion stops claiming occurrences and lets the one in hand finish
 # inside this; the orchestrator's grace period must be longer still, or it kills a replica
 # mid-match and the rows go back to the queue to be replayed from turn zero. It therefore has to
-# exceed the longest match, which is max_turns * turn_ms plus the engine's own time -- a number
-# only the wave-turn spike can give. 600 is a placeholder chosen to be obviously generous.
-shutdown_timeout_secs = 600
+# exceed the longest match, which is max_turns * turn_ms plus the engine's own time and the drain's
+# tail: about 19 minutes worst case. This one IS a maximum rather than a fixed wait -- it bounds
+# how long the occurrence may keep running -- so it costs nothing to set it above the two [server]
+# numbers, and it must be, or the occurrence is cancelled while the server is still willing to wait.
+shutdown_timeout_secs = 1800
 
 [engine]
 # Bounds the wave workflow's per-turn loop. Above max_turns by a wide margin: hitting this is a
