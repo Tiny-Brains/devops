@@ -40,7 +40,11 @@ FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin orion
+ && useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin orion \
+ # A Kalam replica keeps its Orion state in a SQLite file here (kalam.toml.tmpl). No volume is
+ # mounted over it on purpose: the state holds the loaded package and nothing else, so losing it
+ # on a restart costs one package load. Unused by the soma role, which is on Postgres.
+ && install -d -o orion -g orion /var/lib/orion
 
 COPY --from=orion /usr/local/bin/orion-server /usr/local/bin/orion-server
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

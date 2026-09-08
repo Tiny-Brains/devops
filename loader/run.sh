@@ -26,26 +26,52 @@
 #   * the replay bucket              -- a `finished` row REQUIRES replay_key, so a wave that cannot
 #                                       write a blob cannot finish a match
 #
-# LOAD runs soma, jodi and kalam's own load-package.sh, in that order, against ORION_ADMIN. Each
-# one sweeps its own tag (pkg:soma, pkg:jodi, pkg:kalam) and re-creates only its own objects, which
-# is what lets three packages share one server without disturbing each other. What each script
-# needs from the environment is documented at the top of that script; the compose file sets it.
+# LOAD installs each package into the server that runs it -- layer 07 §2 and §8.2. Since the split
+# there are two kinds of target:
+#
+#   SOMA_ORION_ADMIN     one cluster-mode Orion running soma and jodi. Loading against ANY node
+#                        reaches all of them: an admin mutation advances a shared config epoch and
+#                        every replica resyncs to it within epoch_poll_interval_ms.
+#   KALAM_ORION_ADMINS   a COMMA-SEPARATED LIST, one entry per replica, because each replica has
+#                        its own state database and there is no epoch bus between them. This is
+#                        the direct consequence of decision 41 (a replica is not in cluster mode,
+#                        so its `forbid` singleton is its own), and it is why the package is
+#                        installed into each replica rather than baked into an image.
+#
+# Each script sweeps its own tag (pkg:soma, pkg:jodi, pkg:kalam) and re-creates only its own
+# objects. What each one needs from the environment is documented at the top of that script; the
+# compose file sets it.
 set -eu
 
-ADMIN="${ORION_ADMIN:?ORION_ADMIN is required -- the admin API of the orion service}"
+# ORION_ADMIN stays supported as the single-server spelling: it sets both targets at once, which is
+# what a one-Orion stack and a `docker run` both want.
+SOMA_ADMIN="${SOMA_ORION_ADMIN:-${ORION_ADMIN:-}}"
+KALAM_ADMINS="${KALAM_ORION_ADMINS:-${ORION_ADMIN:-}}"
+[ -n "$SOMA_ADMIN" ] || { echo "SOMA_ORION_ADMIN (or ORION_ADMIN) is required" >&2; exit 1; }
+[ -n "$KALAM_ADMINS" ] || { echo "KALAM_ORION_ADMINS (or ORION_ADMIN) is required" >&2; exit 1; }
 PKG="${PKG_ROOT:-/pkg}"
 DB="${LOADER_DB_URL:?LOADER_DB_URL is required -- the match database, as its owner}"
+
+# The comma-separated list as words, for `for` loops.
+kalam_admins() { echo "$KALAM_ADMINS" | tr ',' ' '; }
 
 psql_db() { psql "$DB" -q -v ON_ERROR_STOP=1 "$@"; }
 
 # ---------------------------------------------------------------------------- wait
-wait_ready() {
-  echo "==> waiting for orion at $ADMIN"
+wait_one() {
+  echo "==> waiting for orion at $1"
   i=0
-  until curl -fsS "${ADMIN%/api/v1/admin}/readyz" > /dev/null 2>&1; do
+  until curl -fsS "${1%/api/v1/admin}/readyz" > /dev/null 2>&1; do
     i=$((i + 1))
-    [ "$i" -lt 60 ] || { echo "orion did not become ready" >&2; exit 1; }
+    [ "$i" -lt 60 ] || { echo "orion at $1 did not become ready" >&2; exit 1; }
     sleep 2
+  done
+}
+
+wait_ready() {
+  wait_one "$SOMA_ADMIN"
+  for a in $(kalam_admins); do
+    [ "$a" = "$SOMA_ADMIN" ] || wait_one "$a"
   done
 }
 
@@ -144,22 +170,88 @@ SQL
 }
 
 # ---------------------------------------------------------------------------- load
-load() {
-  for p in soma jodi kalam; do
-    echo "==> loading $p"
-    [ -x "$PKG/$p/scripts/load-package.sh" ] || [ -r "$PKG/$p/scripts/load-package.sh" ] \
-      || { echo "$PKG/$p/scripts/load-package.sh is missing -- mount ../$p at $PKG/$p" >&2; exit 1; }
-    # Not piped through an indenter: a pipe would hide the script's exit status from set -e.
-    sh "$PKG/$p/scripts/load-package.sh"
+# SWEEPING A PACKAGE OFF A SERVER IT NO LONGER BELONGS ON.
+#
+# Each load-package.sh sweeps its OWN tag before re-creating it, which is what makes a reload
+# idempotent. Nothing swept a tag off a server that stopped running it -- and layer 07 is exactly
+# that event: orion_state carried the whole three-package install, and after the split `soma` still
+# held pkg:kalam, whose kalam-db connector then failed to load and put /health in `degraded`. The
+# leftovers are not harmless: a channel that cannot resolve its connector is a permanent degraded
+# status that hides the next real one.
+#
+# So each target is swept of what it must NOT run, every time. Idempotent, and zero rows on a
+# server that was always right.
+sweep_foreign() {   # $1 admin, $2... tags to remove
+  admin="$1"; shift
+  for tag in "$@"; do
+    for kind in channels workflows connectors plugins; do
+      case "$kind" in
+        channels)   key=channel_id ;;
+        workflows)  key=workflow_id ;;
+        connectors) key=id ;;
+        plugins)    key=plugin_id ;;
+      esac
+      for id in $(curl -sS "$admin/$kind?tag=$tag&limit=500" | jq -r ".data[].$key" 2>/dev/null); do
+        # A plugin is archived before it is deleted, and it cannot be archived while an active
+        # workflow calls its functions -- which is why workflows are swept first.
+        [ "$kind" = plugins ] && curl -sS -X PATCH "$admin/plugins/$id/status" \
+            -H 'Content-Type: application/json' -d '{"status":"archived"}' -o /dev/null || true
+        curl -sS -X DELETE "$admin/$kind/$id" -o /dev/null || true
+        echo "    swept $tag $kind/$id"
+      done
+    done
   done
+}
 
-  echo "==> health"
-  curl -fsS "${ADMIN%/api/v1/admin}/health" | jq -r '
+load_one() {   # $1 package, $2 admin
+  [ -x "$PKG/$1/scripts/load-package.sh" ] || [ -r "$PKG/$1/scripts/load-package.sh" ] \
+    || { echo "$PKG/$1/scripts/load-package.sh is missing -- mount ../$1 at $PKG/$1" >&2; exit 1; }
+  # Not piped through an indenter: a pipe would hide the script's exit status from set -e.
+  ORION_ADMIN="$2" sh "$PKG/$1/scripts/load-package.sh"
+}
+
+# THE CHECK THAT CLOSES LAYER 07 §8.2's HOLE. Orion's /readyz goes green as soon as the first
+# generation publishes, so a replica whose package load failed is READY, has no tb-wave channel,
+# claims nothing, and is INVISIBLE CAPACITY -- the autoscaler counts it, the ladder does not, and
+# nothing errors. So a replica's real readiness gate is this, not /readyz.
+health() {   # $1 admin, $2 what must be there ("" to skip the assertion)
+  echo "==> health at $1"
+  h=$(curl -fsS "${1%/api/v1/admin}/health")
+  echo "$h" | jq -r '
     "    status: \(.status)",
     "    plugins: \([.plugins.loaded[]? | "\(.plugin)@\(.version)"] | join(", "))",
+    (if .components.config_propagation then "    config_propagation: \(.components.config_propagation)" else empty end),
     (if (.plugins.failed_to_load // []) | length > 0 then "    FAILED TO LOAD: \(.plugins.failed_to_load)" else empty end),
     (if (.channels.quarantined // []) | length > 0 then "    QUARANTINED: \(.channels.quarantined)" else empty end)'
-  curl -fsS "$ADMIN/channels?limit=500" | jq -r '.data | group_by(.tags[0]) | map("    \(.[0].tags[0]): \(length) channels") | .[]'
+  curl -fsS "$1/channels?limit=500" | jq -r '.data | group_by(.tags[0]) | map("    \(.[0].tags[0]): \(length) channels") | .[]'
+  if [ -n "$2" ]; then
+    echo "$h" | jq -e --arg p "$2" '[.plugins.loaded[]?.plugin] | index($p)' > /dev/null \
+      || { echo "    $2 IS NOT LOADED at $1 -- this node is invisible capacity, not a working replica" >&2; exit 1; }
+    echo "$h" | jq -e '(.channels.quarantined // []) | length == 0' > /dev/null \
+      || { echo "    a channel is quarantined at $1" >&2; exit 1; }
+  fi
+}
+
+load() {
+  echo "==> sweeping what $SOMA_ADMIN must not run"
+  sweep_foreign "$SOMA_ADMIN" pkg:kalam pkg:spike
+  for p in soma jodi; do
+    echo "==> loading $p into $SOMA_ADMIN"
+    load_one "$p" "$SOMA_ADMIN"
+  done
+  # One call reaches every node of the cluster: an admin mutation advances the shared config epoch
+  # and the peers resync to it. Only the Kalam replicas need visiting one by one.
+  health "$SOMA_ADMIN" "tb.rating"
+
+  for a in $(kalam_admins); do
+    if [ "$a" != "$SOMA_ADMIN" ]; then
+      echo "==> sweeping what $a must not run"
+      sweep_foreign "$a" pkg:soma pkg:jodi pkg:spike
+    fi
+    echo "==> loading kalam into $a"
+    load_one kalam "$a"
+    health "$a" "tb.ants"
+  done
 }
 
 # ---------------------------------------------------------------------------- main
