@@ -14,6 +14,7 @@ mod cartridge;
 mod conform;
 mod matchfile;
 mod registry;
+mod serve;
 mod store;
 mod wave;
 
@@ -27,6 +28,7 @@ tinybrains -- run a TinyBrains match locally
   tinybrains games                           what is registered, and at which digest
   tinybrains maps [GAME]                     the boards a game is played on
   tinybrains maps export [GAME] [DIR]        write those boards out as files
+  tinybrains view <replay.json>              watch it in a browser
   tinybrains conform <replay.json>           replay a recorded match here, and diff
 
 Options
@@ -54,6 +56,7 @@ fn real_main() -> Result<(), String> {
         "maps" => cmd_maps(&args[1..]),
         "run" => cmd_run(&args[1..]),
         "conform" => cmd_conform(&args[1..]),
+        "view" => cmd_view(&args[1..]),
         // The shorthand the design asks for: `tinybrains match.json`. Anything that is not a known
         // verb and looks like a file is one.
         other if other.ends_with(".json") => cmd_run(&args),
@@ -393,4 +396,69 @@ fn cmd_conform(args: &[String]) -> Result<(), String> {
          copy from Kalam -- start there."
     );
     Err("conformance failed".to_string())
+}
+
+// ---------------------------------------------------------------- view
+
+/// Serve the game's viewer and one replay on loopback.
+///
+/// The bundle is the cartridge's, not this binary's: the same viewer the web application and the
+/// book embed, re-simulating through the same component digest that recorded the match. A replay
+/// carries its own board, so nothing else is needed to watch one -- no database, no API, no season.
+fn cmd_view(args: &[String]) -> Result<(), String> {
+    let mut path: Option<String> = None;
+    let mut open = true;
+    let mut slug: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--no-open" => open = false,
+            "--game" => {
+                i += 1;
+                slug = Some(args.get(i).ok_or("--game needs a slug")?.clone());
+            }
+            other if !other.starts_with('-') => path = Some(other.to_string()),
+            other => return Err(format!("unknown option '{other}'\n\n{USAGE}")),
+        }
+        i += 1;
+    }
+    let path = path.ok_or("which replay?\n\n  tinybrains view replays/quick-0.json")?;
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let replay: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+
+    let game = open_game(Some(
+        slug.as_deref()
+            .or_else(|| replay.get("game").and_then(|v| v.as_str()))
+            .unwrap_or("ants"),
+    ))?;
+    let viz = serve::viz_dir(&game)?;
+
+    // A viewer built against another engine would re-simulate a match this one did not play, which
+    // is worse than not showing it: it would look right and be wrong.
+    let built = std::fs::read_to_string(viz.join("engine.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["engine_digest"].as_str().map(str::to_string));
+    if let (Some(built), Some(played)) =
+        (built.as_deref(), replay.get("engine_digest").and_then(|v| v.as_str()))
+    {
+        if built != played {
+            eprintln!(
+                "warning: this replay was played on\n           {played}\n\
+                 \x20        and the viewer was built against\n           {built}\n\
+                 \x20        it will re-simulate with the wrong engine -- rebuild viz/"
+            );
+        }
+    }
+
+    println!(
+        "{} -- seed {}, board {}, {} turns, {}",
+        path,
+        replay["seed"],
+        replay["map_id"].as_str().unwrap_or("?"),
+        replay["turns"],
+        replay["reason"].as_str().unwrap_or("?")
+    );
+    serve::serve(&viz, &text, open)
 }
