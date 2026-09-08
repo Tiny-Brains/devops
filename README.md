@@ -188,10 +188,18 @@ and no season. It loads the cartridge component through wasmtime, evaluates adap
 graphs through **axon as a library**, and writes the same replay envelope Kalam writes.
 
 ```sh
-cargo install --path cli          # or --git this repository
-tinybrains games                  # what is registered, at which digest
-tinybrains matches/quick.json     # play it; one replay per row
+cargo install --path cli               # or --git this repository
+tinybrains games                       # what is registered, at which digest
+tinybrains matches/quick.json          # play it; one replay per row
+tinybrains view replays/quick.json     # watch it
+tinybrains check model.onnx adapter.json   # would it be admitted?
 ```
+
+`check` runs admission's own two calls -- `inspect` and `validate`, in the same crate -- against
+the game's committed reference observations, and reports the worst-case adapter cost as a
+percentage of the budget. It says on every run that it is necessary and not sufficient: there is no
+download allowlist here, and the size class is reported rather than decided, because the class
+table is platform policy that lives in Jodi.
 
 It lives here rather than in a game repository because **it knows no game**. It knows five function
 names, `cartridge.json`, and the replay envelope; every board, preset, seat count and limit is read

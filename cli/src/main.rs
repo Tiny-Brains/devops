@@ -11,6 +11,7 @@
 //! not about that loop.
 
 mod cartridge;
+mod check;
 mod conform;
 mod matchfile;
 mod registry;
@@ -29,6 +30,7 @@ tinybrains -- run a TinyBrains match locally
   tinybrains maps [GAME]                     the boards a game is played on
   tinybrains maps export [GAME] [DIR]        write those boards out as files
   tinybrains view <replay.json>              watch it in a browser
+  tinybrains check <model.onnx> <adapter>    would this be admitted?
   tinybrains conform <replay.json>           replay a recorded match here, and diff
 
 Options
@@ -57,6 +59,7 @@ fn real_main() -> Result<(), String> {
         "run" => cmd_run(&args[1..]),
         "conform" => cmd_conform(&args[1..]),
         "view" => cmd_view(&args[1..]),
+        "check" => cmd_check(&args[1..]),
         // The shorthand the design asks for: `tinybrains match.json`. Anything that is not a known
         // verb and looks like a file is one.
         other if other.ends_with(".json") => cmd_run(&args),
@@ -312,8 +315,13 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
 
 /// A replica-mode axon over the local model store. The one config difference from the fleet.
 fn axon_replica() -> Result<axon::server::Axon, String> {
+    Ok(axon::server::Axon::new(axon_config()?))
+}
+
+/// The shared shape: everything but the role.
+fn axon_config() -> Result<axon::config::Config, String> {
     let dir = store::models_dir()?;
-    let cfg = axon::config::Config {
+    Ok(axon::config::Config {
         mode: axon::config::Mode::Replica,
         bind: "127.0.0.1:0".to_string(),
         auth_token: None,
@@ -329,8 +337,7 @@ fn axon_replica() -> Result<axon::server::Axon, String> {
         // this process is not one. A URL in a match file is fetched by the CLI before the loader
         // is asked for anything, so the loader still never reaches out.
         fetch_allow_hosts: Vec::new(),
-    };
-    Ok(axon::server::Axon::new(cfg))
+    })
 }
 
 // ---------------------------------------------------------------- conform
@@ -472,4 +479,92 @@ fn cmd_view(args: &[String]) -> Result<(), String> {
         replay["reason"].as_str().unwrap_or("?")
     );
     serve::serve(&viz, &text, open)
+}
+
+// ---------------------------------------------------------------- check
+
+/// The admission gate, run locally against the game's own reference observations.
+fn cmd_check(args: &[String]) -> Result<(), String> {
+    let mut files: Vec<String> = Vec::new();
+    let mut slug: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--game" => {
+                i += 1;
+                slug = Some(args.get(i).ok_or("--game needs a slug")?.clone());
+            }
+            other if !other.starts_with('-') => files.push(other.to_string()),
+            other => return Err(format!("unknown option '{other}'\n\n{USAGE}")),
+        }
+        i += 1;
+    }
+    if files.len() != 2 {
+        return Err("which model?\n\n  tinybrains check out/model.onnx out/adapter.json".to_string());
+    }
+    let game = open_game(slug.as_deref())?;
+
+    // The set the platform validates against, from the cartridge itself. Its absence is a real
+    // difference and not a detail: without it a local pass says much less than a remote one.
+    let refs = game
+        .component
+        .parent()
+        .map(|d| d.join("reference").join("observations.json"))
+        .filter(|p| p.exists())
+        .ok_or_else(|| format!(
+            "{} ships no reference observations, so there is nothing to validate against.\n\
+             From a cartridge checkout that is `cargo run --bin reference`.",
+            game.slug
+        ))?;
+    let doc: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&refs).map_err(|e| format!("{}: {e}", refs.display()))?,
+    )
+    .map_err(|e| format!("{}: {e}", refs.display()))?;
+    let observations: Vec<serde_json::Value> = doc["observations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if observations.is_empty() {
+        return Err(format!("{} holds no observations", refs.display()));
+    }
+
+    let cwd = std::path::PathBuf::from(".");
+    let wb = store::bytes_of(&files[0], &cwd)?;
+    let ab = store::bytes_of(&files[1], &cwd)?;
+    let weights = store::put(axon::store::Kind::Weights, &wb)?;
+    let adapter = store::put(axon::store::Kind::Adapter, &ab)?;
+
+    println!("{} against {}'s reference set", files[0], game.slug);
+    println!("    weights          {weights}");
+    println!("    adapter          {adapter}");
+    println!();
+
+    // Admission mode, because that is the role that answers these two calls -- a replica returns
+    // NO_SUCH_CALL for both, deliberately.
+    let cfg = axon::config::Config {
+        mode: axon::config::Mode::Admission,
+        fetch_allow_hosts: Vec::new(),
+        ..axon_config()?
+    };
+    let axon_admission = axon::server::Axon::new(cfg);
+
+    let ok = check::run(
+        &game,
+        &axon_admission,
+        &weights,
+        &adapter,
+        &observations,
+        game.budget("adapter_ops_max", 1_000_000),
+        // Admission allows more per observation than a turn does. Checking against the real turn
+        // deadline as well is a stricter local test, not a reproduction of the admission timeout.
+        game.limit("turn_ms", 1000),
+    )?;
+
+    println!();
+    println!("This is not admission. It has no download allowlist and does not decide a size class,");
+    println!("so a pass here is necessary and not sufficient.");
+    if !ok {
+        return Err("check failed".to_string());
+    }
+    Ok(())
 }
