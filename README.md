@@ -54,11 +54,35 @@ reach — it is where GitHub returns the user, not a container-internal name.
 ### What comes up
 
 ```
-db         postgres:16   two databases: `soma` (the data) and `orion_state` (Orion's own)
-soma       :8080         orion-server 1.7.0 + the package, loaded at boot over the admin API
-web        :5173         nginx: the built SPA, and /v1 proxied to soma
-orion-ui   :8081         Orion's operations console 1.6.0, reading soma's admin API
+db               postgres:16   two databases: `soma` (the data) and `orion_state` (Orion's own)
+soma             :8080         orion-server 1.7.0 + the Soma package AND Jodi's four clocks
+jodi             one-shot      loads the pkg:jodi definitions into soma, then exits 0
+web              :5173         nginx: the built SPA, and /v1 proxied to soma
+orion-ui         :8081         Orion's operations console 1.6.0, reading soma's admin API
+kalam            :8082         a match-player replica: its own orion-server on local SQLite
+axon             :9090         the Model Loader beside the replica -- fetches by hash, plays
+axon-admission   :9091         the same binary in its admission role -- fetches by URL, verifies
+minio            :9000/:9001   the object store: replays, written by kalam through a presigned PUT
 ```
+
+**Two servers, and `devops/` is what decides that.** `soma/`, `jodi/` and `kalam/` are separate
+repos that each ship a self-contained Orion package and know nothing of the topology. Today Soma's
+orion-server also runs Jodi's four clocks, because Jodi writes Soma's tables and there is no reason
+yet for a third server; the day Soma's REST surface must scale independently, Jodi gets a service
+here and neither repo changes.
+
+**The two `axon`s are one binary in two roles, and they share one store.** That is a correctness
+property rather than a saving: the admission instance mirrors what it verified under the bytes'
+hash, and the replica fetches by that hash. Two stores would mean admission succeeds and every
+match the version is then paired for fails at the residency barrier — quietly, and a long way from
+the cause. Only the admission instance may reach the public internet; the replica's fetch allowlist
+is empty whatever the environment says.
+
+**Two numbers have to be declared, and neither is typed by hand.** `games.active_engine_digest`,
+written by `scripts/engine-digest.sh`, is what makes a Kalam replica and the queue agree on an
+engine. And `games.manifest` with `games.reference_observations`, written by
+`scripts/seed-cartridge.sh`, is what admission validates a submission against — without them
+`tb-admit` releases every claim with `MANIFEST_INCOMPLETE` rather than rejecting anyone.
 
 **`orion-ui` is Orion's own console, not part of Soma** — live dashboards, a system map of the
 channels and connectors, workflow DAGs, trace drill-downs, and a Data Console for firing test
@@ -97,6 +121,15 @@ open http://localhost:8081          # Orion's console
 docker compose logs -f soma
 docker compose exec db psql -U soma -d soma
 curl -s localhost:5173/v1/games | jq
+curl -s localhost:9091/healthz | jq  # the admission loader: mode, dialect, evaluator digest
+```
+
+**After a fresh volume, in this order:**
+
+```bash
+scripts/engine-digest.sh     # declare the engine, or the replica claims nothing for ever
+scripts/seed-cartridge.sh    # register the cartridge, or admission cannot verify anything
+scripts/seed-baselines.sh    # give the baselines real weights (deleted once they have releases)
 ```
 
 ## How Soma's config gets its values

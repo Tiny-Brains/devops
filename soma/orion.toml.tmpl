@@ -132,6 +132,66 @@ ts_beta             = 4.166666666666667
 ts_tau              = 0.08333333333333333
 ts_draw_probability = 0.10
 
+# ------------------------------------------------- admission -- layer 08 §11, the fourth clock
+#
+# Every one PROVISIONAL, like the rest of Jodi's block.
+#
+# NOT HERE, ON PURPOSE: adapter_ops_max and flop_caps. Those are the GAME'S, read from
+# games.manifest by the admission clock's batch statement (decision 38), because they are per game
+# by construction -- a 128x128 Ants board and a card game have nothing in common -- and a second
+# cartridge must be content rather than a config change. The size-class thresholds are not here
+# either: they are platform-wide, DESIGN.md §5's table, and live in the judging task, because a
+# class boundary a config edit can move means nothing across games.
+
+# Where a release's assets are fetched from. Decision 17 fixes the two asset NAMES -- model.onnx
+# and adapter.json -- so admission constructs two URLs and never parses an asset list; this is the
+# base they are constructed on. It is a var because the host is a deployment fact (a self-hosted
+# forge, or a test rig) rather than policy, and it widens nothing: what may actually be dialled is
+# AXON_FETCH_ALLOW_HOSTS on the admission loader, in the one process that has an allowlist.
+release_base = "${RELEASE_BASE:-https://github.com/}"
+
+# Submissions one run may claim. Raise it when a queue forms.
+admit_batch = 4
+
+# How long a claimed submission stays claimed before another run may re-claim it, and how many
+# attempts before it is rejected TIMED_OUT.
+#
+# THE BOUND IS `zstd -19`, NOT INFERENCE. The expensive step of verification is /inspect computing
+# S -- two level-19 compressions -- and at the top of the `large` class that is tens of seconds on
+# 96 MiB of initializers, legitimately. Add two fetches of that size from GitHub, a session build
+# and a few forward passes and 180 s has room in it. The first real Large submission moves it.
+#
+# It covers VERIFICATION ONLY. A verified version then waits for its trial, and a trial row never
+# times out the candidate -- count's repair_cap above is that clock's patience. Two clocks, two
+# patiences, and neither can strand a version in the other's.
+admit_timeout_s    = 180
+admit_attempts_max = 3
+
+# Per-observation deadline passed to /validate.
+admit_deadline_ms = 5000
+
+# The re-validation sweep's batch (layer 08 §9), run as the tail of an admission run when there is
+# nothing to admit. Zero disables it.
+revalidate_batch = 4
+
+# The season's opset pin (layer 06 finalises this), and the operator allowlist -- DESIGN.md §5's
+# ~40 ops. The loader REPORTS a graph's operators and this list JUDGES them, which is what keeps a
+# policy change out of axon's release cycle. A rejection names the offending operators, because
+# "your model uses an operator this platform does not run" is not actionable.
+opset_min = 13
+opset_max = 19
+op_allowlist = [
+  "Abs", "Add", "And", "ArgMax", "ArgMin", "AveragePool", "BatchNormalization", "Cast", "Ceil",
+  "Clip", "Concat", "Constant", "ConstantOfShape", "Conv", "Div", "Elu", "Equal", "Erf", "Exp",
+  "Expand", "Flatten", "Floor", "Gather", "GatherElements", "Gemm", "GlobalAveragePool",
+  "GlobalMaxPool", "Greater", "HardSigmoid", "Identity", "InstanceNormalization", "LayerNormalization",
+  "LeakyRelu", "Less", "Log", "LogSoftmax", "MatMul", "Max", "MaxPool", "Mean", "Min", "Mul", "Neg",
+  "Not", "Or", "Pad", "Pow", "PRelu", "Range", "Reciprocal", "ReduceMax", "ReduceMean", "ReduceMin",
+  "ReduceSum", "Relu", "Reshape", "Resize", "Selu", "Shape", "Sigmoid", "Sign", "Slice", "Softmax",
+  "Softplus", "Split", "Sqrt", "Squeeze", "Sub", "Sum", "Tanh", "Tile", "Transpose", "Unsqueeze",
+  "Where",
+]
+
 # ---------------------------------------------------------------------- plugins
 #
 # Off by default, which is why the running 1.7.0 node reported `plugins: disabled` until this

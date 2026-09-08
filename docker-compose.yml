@@ -5,10 +5,16 @@
 # the topology; this file decides how many servers there are and which package goes in which. A
 # modular monolith: modular in the repos, and as monolithic in deployment as it is useful to be.
 #
-# Today that means two servers -- Soma's, which also hosts Jodi's three cron clocks, and Kalam's
-# replica -- plus the two processes that are not Orion at all: an `axon` beside the replica, and an
-# object store for the replays. The day Soma's REST surface needs to scale independently of the
-# match maker, Jodi gets its own service here and neither repo changes.
+# Today that means two servers -- Soma's, which also hosts Jodi's FOUR cron clocks, and Kalam's
+# replica -- plus the processes that are not Orion at all: an `axon` beside the replica, a second
+# `axon` in its admission role beside Soma, and an object store for the replays. The day Soma's
+# REST surface needs to scale independently of the match maker, Jodi gets its own service here and
+# neither repo changes.
+#
+# THE TWO AXONS SHARE ONE STORE, and that is a correctness property rather than a saving. The
+# admission instance mirrors what it verified under the bytes' hash; the replica fetches by that
+# hash. Two stores would mean admission succeeds and every match the version is then paired for
+# fails at the residency barrier -- quietly, and a long way from the cause.
 #
 # THE ONE NUMBER THREE SERVICES MUST AGREE ON is the engine digest. `kalam` loads the cartridge as
 # a plugin and Orion keys it by sha256 over the component; `[vars] engine_digest` tells the claim
@@ -85,6 +91,14 @@ services:
       # -- it is just not the thing standing between here and a working ladder.
       JODI_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
 
+      # Jodi's admission clock reaches the admission loader through the `jodi-loader` connector.
+      # Another of Jodi's, resolved by this server because this is the server Jodi is loaded into.
+      ADMISSION_LOADER_URL: ${ADMISSION_LOADER_URL:-http://axon-admission:9090}
+
+      # The base admission builds a release's two asset URLs on (layer 08 §5, decision 17).
+      # github.com in every real deployment; overridable so a test rig can stand in for a forge.
+      RELEASE_BASE: ${RELEASE_BASE:-https://github.com/}
+
       # HS256 key for the session tokens and for the sign-in channel's state cookie.
       # Rotating it invalidates every live session and every sign-in in flight.
       # At least 32 bytes -- oauth2_login.state_secret refuses a shorter one.
@@ -145,12 +159,15 @@ services:
     depends_on:
       soma:
         condition: service_healthy
+      axon-admission:
+        condition: service_healthy
     volumes:
       - ../jodi:/jodi:ro
     environment:
       ORION_ADMIN: http://soma:8080/api/v1/admin
-      # jodi-db resolves to a compose service name, which is a private address; Orion's SSRF guard
-      # refuses those unless the connector opts in.
+      # jodi-db and jodi-loader both resolve to compose service names, which are private
+      # addresses; Orion's SSRF guard refuses those unless the connector opts in. jodi-github is
+      # public and is left alone.
       JODI_ALLOW_PRIVATE_DB: "1"
     command: >
       sh -c "apk add --no-cache curl jq > /dev/null && sh /jodi/scripts/load-package.sh"
@@ -220,6 +237,40 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:9090:9090"
+
+  # The SECOND role of the same binary: admission (layer 04 §8, layer 08). It differs from the
+  # replica above in four ways and no others -- it accepts URLs and fetches from allowlisted hosts,
+  # it mirrors what it verified into the store inside the /load call, it serves /inspect and
+  # /validate, and it refuses /play with a 404 so a confusion of roles is loud.
+  #
+  # IT MOUNTS THE SAME STORE AS THE REPLICA, and that is load-bearing rather than convenient.
+  # Admission's mirror is what a replica later fetches by hash; two stores means admission succeeds,
+  # the version verifies, pair queues its trial, and the residency barrier refuses every row with
+  # FETCH_FAILED -- a quiet failure a long way from its cause. Layer 07 replaces the shared volume
+  # with R2, which both instances reach through the same trait.
+  #
+  # It is reachable from soma's orion-server because that is where Jodi's admission clock runs; the
+  # day devops gives Jodi a server of its own, ADMISSION_LOADER_URL moves with it.
+  axon-admission:
+    build:
+      context: ../axon
+    environment:
+      AXON_MODE: admission
+      AXON_BIND: 0.0.0.0:9090
+      AXON_STORE_DIR: /var/lib/axon
+      # Only this instance may reach the public internet, and only these two hosts. A release
+      # download URL on github.com redirects to objects.githubusercontent.com, so both are needed.
+      AXON_FETCH_ALLOW_HOSTS: ${AXON_FETCH_ALLOW_HOSTS:-github.com,objects.githubusercontent.com}
+      # Bigger than the replica's: admission holds up to admit_batch models at once, and a Large
+      # entry is 64 MiB compressed. A refusal here is a loader fault and a wasted attempt.
+      AXON_MEMORY_BUDGET_BYTES: ${AXON_ADMISSION_MEMORY_BYTES:-2147483648}
+      # Nothing plays here, so a model need not linger; the clock unloads explicitly anyway.
+      AXON_IDLE_TTL_S: ${AXON_ADMISSION_IDLE_TTL_S:-120}
+    volumes:
+      - axon-store:/var/lib/axon
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9091:9090"
 
   # MinIO: the replay object store, S3-compatible, so `kalam-blobs` presigns against a real
   # implementation rather than a placeholder. This is not decoration -- a `finished` row REQUIRES
