@@ -72,6 +72,10 @@ pub struct Report {
     pub outcomes: Vec<Outcome>,
     pub turns_played: u64,
     pub play_calls: u64,
+    /// Seat-turns: one model evaluated for one seat on one turn. The unit a budget is spent in,
+    /// and not the same as a play call -- a wave of eight matches asks for sixteen of these at
+    /// once, which is the whole point of batching and would make a per-call mean meaningless.
+    pub seat_turns: u64,
     pub total_ops: u64,
     pub total_play_ms: u64,
 }
@@ -156,6 +160,7 @@ pub fn run(
         outcomes: Vec::new(),
         turns_played: 0,
         play_calls: 0,
+        seat_turns: 0,
         total_ops: 0,
         total_play_ms: 0,
     };
@@ -203,6 +208,7 @@ pub fn run(
             report.play_calls += 1;
 
             for r in played["rows"].as_array().cloned().unwrap_or_default() {
+                report.seat_turns += 1;
                 report.total_ops += r["ops"].as_u64().unwrap_or(0);
                 report.total_play_ms += r["elapsed_ms"].as_u64().unwrap_or(0);
                 let m = r["ref"]["m"].as_u64().unwrap_or(0) as usize;

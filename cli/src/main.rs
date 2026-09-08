@@ -285,12 +285,23 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
 
     if report.play_calls > 0 {
         println!();
+        let st = report.seat_turns.max(1);
         println!(
-            "{} turns, {} play calls, mean {} ops and {} ms per seat-turn",
+            "{} turns in {} batched play call{}, {} seat-turns: mean {} ops, {} ms",
             report.turns_played,
             report.play_calls,
-            report.total_ops / report.play_calls.max(1),
-            report.total_play_ms / report.play_calls.max(1),
+            if report.play_calls == 1 { "" } else { "s" },
+            report.seat_turns,
+            report.total_ops / st,
+            report.total_play_ms / st,
+        );
+        // The budget is per seat-turn, so the worst one is what admission would refuse -- a mean
+        // hides exactly the turn that would have failed.
+        let cap = mf.var("budget_ops", game.budget("adapter_ops_max", 1_000_000));
+        println!(
+            "adapter budget {}: mean run used {}%",
+            cap,
+            (report.total_ops / st) * 100 / cap.max(1)
         );
     }
     // Local runs are more permissive than admission: any path or URL loads here, and no class cap

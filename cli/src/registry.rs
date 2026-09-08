@@ -78,11 +78,21 @@ impl Registry {
         toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    /// Where the registry lives: `$TINYBRAINS_REGISTRY`, else `games/registry.toml` beside the
-    /// devops checkout this binary was built from, else the installed copy in the cache.
+    /// Where the registry lives, in the order a competitor would expect.
+    ///
+    /// `games.toml` in the working directory comes first, and it is the one that matters: it lets
+    /// a project carry its own games the way it carries its own matches, so a clone of
+    /// `tinybrains-local` needs no environment variable and no devops checkout. The rest are for
+    /// someone working inside this repository, or with a registry they installed once.
     pub fn find() -> Result<PathBuf, String> {
         if let Ok(p) = std::env::var("TINYBRAINS_REGISTRY") {
             return Ok(PathBuf::from(p));
+        }
+        for name in ["games.toml", "tinybrains.toml"] {
+            let here = PathBuf::from(name);
+            if here.exists() {
+                return Ok(here);
+            }
         }
         let built_in = Path::new(env!("CARGO_MANIFEST_DIR")).join("../games/registry.toml");
         if built_in.exists() {
@@ -92,7 +102,10 @@ impl Registry {
         if cached.exists() {
             return Ok(cached);
         }
-        Err("no games registry -- set TINYBRAINS_REGISTRY to a registry.toml".to_string())
+        Err("no games registry.\n\
+             A project carries its own as `games.toml`; clone tinybrains-local for one that works,\n\
+             or point TINYBRAINS_REGISTRY at a registry.toml."
+            .to_string())
     }
 
     pub fn resolve(&self, slug: &str, registry_path: &Path) -> Result<Game, String> {
