@@ -162,6 +162,8 @@ is a development convenience, not that rollout protocol.
 ## Layout
 
 ```text
+cli/                   the `tinybrains` binary: run a match on a laptop, any game
+games/registry.toml    which games exist, and where their artifacts come from
 docker-compose.yml     services, networks, mounts, profiles, and volumes
 .env.example           configuration contract without private credentials
 orion/Dockerfile        checksum-verified upstream Orion image
@@ -178,6 +180,47 @@ scripts/declare-engine.sh the engine cutover: deploy step 6, with its fleet pref
 scripts/seed-baselines.sh development model-store fixtures
 scripts/resync-dev-schema.sh guarded development schema repair
 ```
+
+### The local loop
+
+`cli/` builds `tinybrains`, one binary that plays a wave on a laptop with no Compose, no database
+and no season. It loads the cartridge component through wasmtime, evaluates adapters and ONNX
+graphs through **axon as a library**, and writes the same replay envelope Kalam writes.
+
+```sh
+cargo install --path cli          # or --git this repository
+tinybrains games                  # what is registered, at which digest
+tinybrains matches/quick.json     # play it; one replay per row
+```
+
+It lives here rather than in a game repository because **it knows no game**. It knows five function
+names, `cartridge.json`, and the replay envelope; every board, preset, seat count and limit is read
+from the manifest. Adding a second game is an entry in `games/registry.toml` and no Rust at all,
+which is the claim `ants/docs/cartridge.md` makes about the platform and this is where it is tested.
+
+Its input is a wave, not a set of flags. `match.json` is `K_WAVE`'s rows plus the Orion `[vars]`
+they run under, so a real claim can be dumped to a file and replayed on a laptop. The one local
+addition is that a seat may name `weights`/`adapter` as a path or a URL instead of the two hashes;
+a file that uses only hashes is byte-compatible with what the database holds.
+
+**What is identical to production**, and this is the point: the component (same file, same digest),
+axon (same crate, same `evaluator_digest`), `cartridge.json`, the boards, and the envelope. What
+differs is config — a directory model store instead of S3, a file instead of a presigned PUT, and
+rows from a file instead of a claim under a lease.
+
+**Where it is a copy and not the thing**: the wave loop. Kalam expresses it as an Orion workflow of
+JSONLogic and `cli/src/wave.rs` expresses it as Rust; nothing makes those one artifact, and its
+docstring names the five behaviours it has to copy exactly. So the agreement is checked rather than
+argued:
+
+```sh
+tinybrains conform replays/some-match.json
+```
+
+That rebuilds the match from the envelope alone — its board, its seed, its seats — plays it here,
+and diffs every field and every turn of the action stream. It has been run against a replay this
+stack wrote: identical, all 150 turns. A difference in the deltas is the one that matters, because
+ranks and scores can agree while the match that produced them differs.
 
 ### Plugin signing
 
@@ -198,6 +241,9 @@ needed it. The private half never lives here — a deployment signs with its own
 orchestrator's secret store and sets only the public half.
 
 ## What must stay true
+
+- **The CLI knows no game.** `cli/` never links an engine crate and never names a cartridge's types; a second game is a registry entry. If that stops being true the seam has quietly moved.
+- **A local result and a ladder result are the same match.** `tinybrains conform` is the check, and `cli/src/wave.rs` is the only place a copy of Kalam's loop is allowed to live.
 
 - **Jodi shares scheduler state; Kalam replicas do not.** check-configs.sh checks the cluster split so a fleet does not accidentally share one wave lock.
 - **Admission and play use the same model store.** Compose wires the same bucket into both roles; review must preserve that equality.

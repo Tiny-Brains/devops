@@ -1,0 +1,41 @@
+# tinybrains -- the local loop.
+#
+# One binary that plays a wave on a laptop: it loads a cartridge component through wasmtime,
+# evaluates competitors' adapters and ONNX graphs through axon as a library, and writes the same
+# replay envelope Kalam writes. The point is that none of those are re-implementations. The
+# component is the file the ladder plays, axon is the crate the fleet runs, and the envelope is
+# the one the viewer reads.
+#
+# IT KNOWS NO GAME. Five function names, `cartridge.json`, and the replay envelope -- no Ants
+# types, no dependency on any engine crate. Adding a second game is an entry in
+# `devops/games/registry.toml` and no Rust at all, which is the claim `ants/docs/cartridge.md`
+# makes about the platform and this is where it gets tested.
+[package]
+name = "tinybrains"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "tinybrains"
+path = "src/main.rs"
+
+[dependencies]
+# The cartridge host. Version 48 with the component model, matching what orion-server runs, so the
+# component is executed here by the same runtime that executes it in production.
+wasmtime = { version = "48", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+
+# The evaluator, as a library rather than over HTTP. A path dependency while the repositories are
+# siblings; a release pins a git revision, and `tinybrains games` prints the evaluator digest it
+# was built against so a stale pin is visible rather than silent.
+axon = { path = "../../axon" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+ureq = { version = "2", features = ["json"] }
+dirs = "5"
+
+[profile.release]
+opt-level = 2
