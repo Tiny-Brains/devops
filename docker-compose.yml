@@ -180,8 +180,13 @@ services:
       # says. A dev stack that wants to reopen immediately sets 0.
       SEASON_GAP_DAYS: ${SEASON_GAP_DAYS:-1}
 
-      # The replay store, read by soma-blobs (presigned GET). Locally minio; in a deployment, R2.
-      R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+      # The replay store, read by soma-blobs -- PRESIGNED GET AND NOTHING ELSE. Signing makes no
+      # network call, so what Soma needs here is not an address it can reach: it is the address the
+      # BROWSER will fetch, because SigV4 signs the host and a URL signed for `minio:9000` is a URL
+      # only a container can use. Everything else on this stack keeps the internal name; this one
+      # service is different because its output leaves the network. In a deployment the two are the
+      # same public R2 endpoint and R2_PUBLIC_ENDPOINT can go unset.
+      R2_ENDPOINT: ${R2_PUBLIC_ENDPOINT:-${R2_ENDPOINT:-http://127.0.0.1:9000}}
       R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
       R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
       R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
@@ -401,6 +406,12 @@ services:
   web:
     build:
       context: ../web
+    volumes:
+      # The book, rendered, read-only. It is a separate repository and web/'s build
+      # context cannot reach it, so locally it is mounted and a deployment bakes it into
+      # the image at the same path. Run `mdbook build` in docs/ first; without it
+      # /docs answers 404 and nothing else on the site is affected.
+      - ../docs/book:/usr/share/nginx/html/docs:ro
     depends_on:
       soma:
         condition: service_healthy
