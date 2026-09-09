@@ -182,6 +182,34 @@ else
   skip "orion-server parse (no docker, or the image is not built yet: docker compose build soma)"
 fi
 
+# ---------------------------------------------------------------- the vendored engine
+#
+# Kalam vendors the cartridge rather than building it, so two committed copies of one component
+# exist and they can drift. When they do, NOTHING ERRORS: the loader uploads kalam's copy and
+# declares its digest, the replicas claim rows naming it, and the ladder plays a component that is
+# not the one the cartridge repository ships -- with a viewer built against the other one.
+#
+# It has already happened once, from an edit that changed no behaviour at all: a doc comment in
+# ants shifted the line numbers Rust bakes into panic locations, the rebuild produced a different
+# digest, and the vendored copy was a build behind.
+ANTS="${ANTS_DIR:-../ants}"
+VENDORED="../kalam/plugins/tb-ants/tb-ants.wasm"
+if [ -r "$ANTS/tb-ants.wasm" ] && [ -r "$VENDORED" ]; then
+  if command -v sha256sum > /dev/null 2>&1; then H=sha256sum; else H="shasum -a 256"; fi
+  a=$($H "$ANTS/tb-ants.wasm" | cut -d' ' -f1)
+  b=$($H "$VENDORED" | cut -d' ' -f1)
+  if [ "$a" = "$b" ]; then
+    ok "the vendored engine is the one ants ships (${a%${a#????????}}...)"
+  else
+    bad "kalam's vendored engine is not the one ants ships
+       ants     sha256:$a
+       kalam    sha256:$b
+     run kalam/scripts/vendor-engine.sh, then devops/scripts/sign-plugins.sh"
+  fi
+else
+  skip "vendored engine (no ants checkout beside this one, or it has not been built)"
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "==> configs agree"
 else
