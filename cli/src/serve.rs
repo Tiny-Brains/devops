@@ -142,11 +142,15 @@ const PAGE: &str = r##"<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TinyBrains replay</title>
 <style>
-  html,body { margin:0; height:100%; background:#f7f7f3; }
-  @media (prefers-color-scheme: dark) { html,body { background:#141613; } }
+  /* The platform's own two grounds, written out: this page ships no design-system stylesheet, and
+     the viewer's chrome falls back to the same palette and follows prefers-color-scheme with it. */
+  html,body { margin:0; height:100%; background:#F5F8FF; color:#142642; }
+  @media (prefers-color-scheme: dark) { html,body { background:#090F1D; color:#EEF3FF; } }
   #app { height:100%; display:flex; }
-  #app > .tb-viz { flex:1; border:0; }
-  #boot { font:14px/1.6 ui-sans-serif,system-ui,sans-serif; color:#6e736c; padding:24px; }
+  #app > .tb-viz { flex:1; }
+  #boot { font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+          color:#536780; padding:24px; }
+  @media (prefers-color-scheme: dark) { #boot { color:#A6B5D1; } }
 </style>
 </head>
 <body>
