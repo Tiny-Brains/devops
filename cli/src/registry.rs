@@ -81,9 +81,9 @@ impl Registry {
     /// Where the registry lives, in the order a competitor would expect.
     ///
     /// `games.toml` in the working directory comes first, and it is the one that matters: it lets
-    /// a project carry its own games the way it carries its own matches, so a clone of
-    /// `tinybrains-local` needs no environment variable and no devops checkout. The rest are for
-    /// someone working inside this repository, or with a registry they installed once.
+    /// a project carry its own games the way it carries its own matches, so a clone of `drill`
+    /// needs no environment variable and no devops checkout. The rest are for someone working
+    /// inside this repository, or with a registry they installed once.
     pub fn find() -> Result<PathBuf, String> {
         if let Ok(p) = std::env::var("TINYBRAINS_REGISTRY") {
             return Ok(PathBuf::from(p));
@@ -103,7 +103,7 @@ impl Registry {
             return Ok(cached);
         }
         Err("no games registry.\n\
-             A project carries its own as `games.toml`; clone tinybrains-local for one that works,\n\
+             A project carries its own as `games.toml`; clone drill for one that works,\n\
              or point TINYBRAINS_REGISTRY at a registry.toml."
             .to_string())
     }
