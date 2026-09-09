@@ -153,11 +153,13 @@ const PAGE: &str = r##"<!doctype html>
 <div id="app"><div id="boot">decoding the match…</div></div>
 <script type="module">
   // The viewer is the cartridge's own bundle, served from viz/dist. The page is a page.
-  import { mount } from "./viz.js";
+  import { mount, optsFromHash } from "./viz.js";
   try {
     const replay = await (await fetch("./replay.json")).json();
     document.getElementById("boot")?.remove();
-    await mount("#app", replay, { autoplay: false });
+    // A link can point at a moment: #turn=84, or #from=40&to=60&autoplay=1. A replay is evidence,
+    // and evidence gets cited by turn rather than described.
+    await mount("#app", replay, { autoplay: false, ...optsFromHash() });
   } catch (e) {
     document.getElementById("app").innerHTML =
       '<div id="boot">' + String(e && e.message || e) + "</div>";
