@@ -45,6 +45,16 @@ pub struct Seat {
     pub seat: u64,
     pub weights_hash: String,
     pub adapter_hash: String,
+    /// Orders written down instead of inferred, one entry per turn.
+    ///
+    /// A teaching example is not a match: "two ants walk into the same square" has to happen
+    /// exactly, every time, and no model can be relied on to do it. A scripted seat plays through
+    /// the real cartridge and produces a real replay envelope — so the rules a tutorial shows are
+    /// the rules, and not a drawing of them.
+    ///
+    /// An entry is either one order for every ant (`"E"`) or one per ant in `mine` order
+    /// (`["E", "W"]`). Past the end of the script a seat holds.
+    pub script: Option<Vec<Value>>,
     /// What to call this seat in output and in the replay. The path or name it was written as,
     /// because `sha256:1a3f…` tells a competitor nothing about which of their models lost.
     pub label: String,
@@ -139,7 +149,23 @@ impl Seat {
         let seat = s.get("seat").and_then(|v| v.as_u64()).unwrap_or(index as u64);
         let here = format!("row '{row}' seat {seat}");
 
-        // The production form, first: a seat that names hashes is already what the database holds.
+        // A written script, before anything else: a scripted seat names no model, so it must not
+        // be asked for one.
+        if let Some(script) = s.get("script").and_then(|v| v.as_array()) {
+            return Ok(Seat {
+                seat,
+                weights_hash: String::new(),
+                adapter_hash: String::new(),
+                script: Some(script.clone()),
+                label: s
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("scripted")
+                    .to_string(),
+            });
+        }
+
+        // The production form: a seat that names hashes is already what the database holds.
         let by_hash = (
             s.get("weights_hash").and_then(|v| v.as_str()),
             s.get("adapter_hash").and_then(|v| v.as_str()),
@@ -149,6 +175,7 @@ impl Seat {
                 seat,
                 weights_hash: w.to_string(),
                 adapter_hash: a.to_string(),
+                script: None,
                 label: s
                     .get("label")
                     .and_then(|v| v.as_str())
@@ -161,7 +188,9 @@ impl Seat {
         let w = s
             .get("weights")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("{here}: needs `weights_hash` + `adapter_hash`, or `weights` + `adapter`"))?;
+            .ok_or_else(|| format!(
+                "{here}: needs `weights_hash` + `adapter_hash`, `weights` + `adapter`, or a `script`"
+            ))?;
         let a = s
             .get("adapter")
             .and_then(|v| v.as_str())
@@ -178,6 +207,7 @@ impl Seat {
             seat,
             weights_hash,
             adapter_hash,
+            script: None,
             label: s
                 .get("label")
                 .and_then(|v| v.as_str())

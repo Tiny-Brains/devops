@@ -206,6 +206,12 @@ names, `cartridge.json`, and the replay envelope; every board, preset, seat coun
 from the manifest. Adding a second game is an entry in `games/registry.toml` and no Rust at all,
 which is the claim `ants/docs/cartridge.md` makes about the platform and this is where it is tested.
 
+A seat can also be **scripted** rather than modelled: `"script": ["E", "E", "-"]` reads its orders
+instead of inferring them, never reaches the loader, and still goes through the cartridge. That is
+how the book's teaching replays are made -- "two ants walk into the same square" has to happen
+exactly, and no model can be relied on to do it. A lesson costs no ONNX and no model store, and
+still demonstrates the rules rather than a drawing of them.
+
 Its input is a wave, not a set of flags. `match.json` is `K_WAVE`'s rows plus the Orion `[vars]`
 they run under, so a real claim can be dumped to a file and replayed on a laptop. The one local
 addition is that a seat may name `weights`/`adapter` as a path or a URL instead of the two hashes;

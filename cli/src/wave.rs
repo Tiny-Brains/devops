@@ -56,6 +56,8 @@ struct Ref {
     adapter_hash: String,
     strikes: u64,
     forfeited: bool,
+    /// Orders written down rather than inferred. A scripted seat never reaches the loader.
+    script: Option<Vec<Value>>,
 }
 
 impl Ref {
@@ -97,6 +99,11 @@ pub fn run(
     let mut seen = std::collections::BTreeSet::new();
     for row in &mf.rows {
         for s in &row.seats {
+            // A scripted seat has no model to hold, and asking the loader for an empty hash would
+            // fail a teaching example that never needed ONNX at all.
+            if s.script.is_some() {
+                continue;
+            }
             if seen.insert((s.weights_hash.clone(), s.adapter_hash.clone())) {
                 models.push(json!({
                     "weights_hash": s.weights_hash, "adapter_hash": s.adapter_hash
@@ -104,6 +111,7 @@ pub fn run(
             }
         }
     }
+    if !models.is_empty() {
     let hold: axon::api::LoadRequest =
         serde_json::from_value(json!({ "models": models, "wait_ms": 60000 }))
             .map_err(|e| format!("load request: {e}"))?;
@@ -119,6 +127,7 @@ pub fn run(
                 m["adapter_hash"].as_str().unwrap_or("?"),
             ));
         }
+    }
     }
 
     // ---- open the wave. One worldgen with every seed, which is what makes this a wave and not
@@ -151,6 +160,7 @@ pub fn run(
                 adapter_hash: s.adapter_hash.clone(),
                 strikes: 0,
                 forfeited: false,
+                script: s.script.clone(),
             });
         }
     }
@@ -166,6 +176,7 @@ pub fn run(
     };
 
     // ---- the loop.
+    let mut turn_index = 0usize;
     loop {
         let obs = cart
             .invoke(
@@ -182,12 +193,36 @@ pub fn run(
         }
 
         // Rule 2: a forfeited seat is not sent at all.
-        let playing: Vec<&Value> = views
+        let live: Vec<&Value> = views
             .iter()
             .filter(|v| !v["ref"]["forfeited"].as_bool().unwrap_or(false))
             .collect();
 
         let mut acts: Vec<Value> = Vec::new();
+
+        // A scripted seat's orders are read, not inferred. It never reaches the loader, so a
+        // teaching example costs no inference and needs no model at all -- and it still goes
+        // through `step`, so what it demonstrates is the rules rather than a drawing of them.
+        let mut playing: Vec<&Value> = Vec::new();
+        for v in &live {
+            let m = v["ref"]["m"].as_u64().unwrap_or(0) as usize;
+            let seat = v["ref"]["seat"].as_u64().unwrap_or(0);
+            let scripted = refs
+                .iter()
+                .find(|x| x.m == m && x.seat == seat)
+                .and_then(|x| x.script.as_ref());
+            match scripted {
+                Some(script) => {
+                    let ants = v["view"]["mine"].as_array().map(|a| a.len()).unwrap_or(0);
+                    acts.push(json!({
+                        "m": m, "seat": seat,
+                        "action": scripted_orders(script, turn_index, ants),
+                    }));
+                }
+                None => playing.push(v),
+            }
+        }
+
         if !playing.is_empty() {
             let rows: Vec<Value> = playing
                 .iter()
@@ -245,6 +280,7 @@ pub fn run(
             .map_err(fault)?;
         state = stepped["wave_state"].clone();
         report.turns_played += 1;
+        turn_index += 1;
         for d in stepped["replay_delta"].as_array().cloned().unwrap_or_default() {
             let m = d["m"].as_u64().unwrap_or(0) as usize;
             deltas.entry(m).or_default().push(d);
@@ -364,4 +400,22 @@ pub fn check_uniform(rows: &[Row]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+
+/// One turn of a script, sized to the ants a seat actually has.
+///
+/// An entry is either one order for every ant (`"E"`) or one per ant in `mine` order
+/// (`["E", "W"]`). Past the end of the script a seat holds, which is how a scenario stops without
+/// needing a turn count written in two places.
+fn scripted_orders(script: &[Value], turn: usize, ants: usize) -> Value {
+    let entry = script.get(turn);
+    let orders: Vec<Value> = match entry {
+        Some(Value::String(one)) => (0..ants).map(|_| json!(one)).collect(),
+        Some(Value::Array(per_ant)) => (0..ants)
+            .map(|i| per_ant.get(i).cloned().unwrap_or(json!("-")))
+            .collect(),
+        _ => (0..ants).map(|_| json!("-")).collect(),
+    };
+    Value::Array(orders)
 }
