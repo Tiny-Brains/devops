@@ -164,7 +164,12 @@ SQL
   jq -e '.budgets.adapter_ops_max and (.budgets.flop_caps | length > 0)' "$manifest" > /dev/null \
     || { echo "$manifest declares no budgets.adapter_ops_max / budgets.flop_caps" >&2; exit 1; }
   if [ -r "$PKG/ants/reference/observations.json" ]; then
-    obs=$(jq -c . "$PKG/ants/reference/observations.json")
+    # The file is an OBJECT -- `note`, `generated_from`, `observations` -- because the provenance of
+    # a gate is worth keeping beside it. The column is an ARRAY of observations, which is what
+    # admission iterates and what the fallback below builds, so take the array out rather than
+    # storing the envelope: `jsonb_array_length` on the envelope is the error this used to be.
+    obs=$(jq -ce '.observations | select(type == "array")' "$PKG/ants/reference/observations.json") \
+      || { echo "$PKG/ants/reference/observations.json has no 'observations' array" >&2; exit 1; }
     echo "    reference set: ants/reference/observations.json"
   else
     obs=$(jq -c '[.]' "${REFERENCE_OBSERVATION:-$PKG/reference/ants-observation.json}")
