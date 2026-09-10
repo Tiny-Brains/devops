@@ -1,25 +1,18 @@
 //! Which games exist, and where their artifacts are.
 //!
-//! devops already *is* the game registry: `loader/run.sh` writes `games.slug`, `manifest`,
-//! `active_engine_digest` and `reference_observations` from each cartridge's committed artifacts.
-//! This is the same four things in a file, so the CLI can resolve a game with no database and no
-//! network — and so the digest a competitor plays against is *the same string* the ladder pins in
-//! `games.active_engine_digest` and `seasons.engine_digest`.
+//! The same four things `loader/run.sh` writes onto the `games` row, in a file, so the CLI resolves
+//! a game with no database and no network -- and the digest a competitor plays against is the same
+//! string the ladder pins.
 //!
-//! An entry resolves one of two ways:
-//!
-//!   * **`path`** — a checkout beside this one. What a cartridge author uses: the board they just
-//!     generated and the component they just built, with no release and no upload. The digest is
-//!     whatever the file hashes to and is reported rather than pinned, because it changes on every
-//!     build and pinning it would only ever be wrong.
-//!   * **`release`** — the published artifacts, fetched once and cached under
-//!     `~/.cache/tinybrains/cartridges/<digest>/`. Pinned: a file whose digest does not match what
-//!     the registry declares is refused, not used.
+//! An entry resolves by `path` (a sibling checkout; the digest is whatever the file hashes to) or
+//! by `release` (published artifacts, cached under `~/.cache/tinybrains/cartridges/<digest>/` and
+//! refused if they do not hash to what the registry declares).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::store;
 
@@ -43,10 +36,6 @@ pub struct GameEntry {
     pub component: Option<Artifact>,
     #[serde(default)]
     pub manifest: Option<Artifact>,
-    #[serde(default)]
-    pub viewer: Option<Artifact>,
-    #[serde(default)]
-    pub reference: Option<Artifact>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -59,14 +48,11 @@ pub struct Artifact {
 pub struct Game {
     pub slug: String,
     pub name: String,
-    /// The component, and the digest it actually hashes to — which is what a replica would load
-    /// and what a match row must name for anything to claim it.
     pub component: PathBuf,
     pub engine_digest: String,
     /// `cartridge.json`: presets, seats, limits, budgets, and the board catalogue.
-    pub manifest: serde_json::Value,
-    /// Where the boards live as files, when the game ships them. `None` for a release entry until
-    /// the viewer/maps artifacts are published.
+    pub manifest: Value,
+    /// Where the boards live as files, when the game ships them.
     pub maps_dir: Option<PathBuf>,
     pub source: String,
 }
@@ -78,34 +64,30 @@ impl Registry {
         toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    /// Where the registry lives, in the order a competitor would expect.
-    ///
-    /// `games.toml` in the working directory comes first, and it is the one that matters: it lets
-    /// a project carry its own games the way it carries its own matches, so a clone of `drill`
-    /// needs no environment variable and no devops checkout. The rest are for someone working
-    /// inside this repository, or with a registry they installed once.
+    /// `games.toml` in the working directory first: a project carries its own games the way it
+    /// carries its own matches, so a clone of `drill` needs no environment variable.
     pub fn find() -> Result<PathBuf, String> {
         if let Ok(p) = std::env::var("TINYBRAINS_REGISTRY") {
             return Ok(PathBuf::from(p));
         }
-        for name in ["games.toml", "tinybrains.toml"] {
-            let here = PathBuf::from(name);
-            if here.exists() {
-                return Ok(here);
-            }
-        }
         let built_in = Path::new(env!("CARGO_MANIFEST_DIR")).join("../games/registry.toml");
-        if built_in.exists() {
-            return Ok(built_in);
-        }
-        let cached = store::root()?.join("registry.toml");
-        if cached.exists() {
-            return Ok(cached);
-        }
-        Err("no games registry.\n\
-             A project carries its own as `games.toml`; clone drill for one that works,\n\
-             or point TINYBRAINS_REGISTRY at a registry.toml."
-            .to_string())
+        let cached = store::root().map(|r| r.join("registry.toml"));
+        let candidates = [
+            Some(PathBuf::from("games.toml")),
+            Some(PathBuf::from("tinybrains.toml")),
+            Some(built_in),
+            cached.ok(),
+        ];
+        candidates
+            .into_iter()
+            .flatten()
+            .find(|p| p.exists())
+            .ok_or_else(|| {
+                "no games registry.\n\
+                 A project carries its own as `games.toml`; clone drill for one that works,\n\
+                 or point TINYBRAINS_REGISTRY at a registry.toml."
+                    .to_string()
+            })
     }
 
     pub fn resolve(&self, slug: &str, registry_path: &Path) -> Result<Game, String> {
@@ -117,20 +99,7 @@ impl Registry {
 
         if let Some(rel) = &entry.path {
             let checkout = base.join(rel);
-            let component = checkout.join("tb-ants.wasm");
-            // A cartridge names its own component; the manifest is the one file whose name the
-            // platform fixes, so the component is found through it rather than guessed.
-            let component = if component.exists() {
-                component
-            } else {
-                find_component(&checkout)?
-            };
-            let manifest_path = checkout.join("cartridge.json");
-            let manifest: serde_json::Value = serde_json::from_str(
-                &std::fs::read_to_string(&manifest_path)
-                    .map_err(|e| format!("cannot read {}: {e}", manifest_path.display()))?,
-            )
-            .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+            let component = find_component(&checkout)?;
             let bytes = std::fs::read(&component)
                 .map_err(|e| format!("cannot read {}: {e}", component.display()))?;
             let maps = checkout.join("maps");
@@ -139,7 +108,7 @@ impl Registry {
                 name: entry.name.clone(),
                 engine_digest: store::digest(&bytes),
                 component,
-                manifest,
+                manifest: read_json(&checkout.join("cartridge.json"))?,
                 maps_dir: maps.is_dir().then_some(maps),
                 source: format!("checkout {}", checkout.display()),
             });
@@ -164,34 +133,38 @@ impl Registry {
 
         let component_path = fetch(repo, release, component)?;
         let manifest_path = fetch(repo, release, manifest)?;
-        let manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&manifest_path)
-                .map_err(|e| format!("cannot read {}: {e}", manifest_path.display()))?,
-        )
-        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
 
         Ok(Game {
             slug: slug.to_string(),
             name: entry.name.clone(),
             engine_digest: component.sha256.clone(),
             component: component_path,
-            manifest,
+            manifest: read_json(&manifest_path)?,
             maps_dir: None,
             source: format!("{repo}@{release}"),
         })
     }
 }
 
+fn read_json(path: &Path) -> Result<Value, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The component by extension, never by name: this binary knows no game.
 fn find_component(checkout: &Path) -> Result<PathBuf, String> {
     let entries = std::fs::read_dir(checkout)
         .map_err(|e| format!("cannot read {}: {e}", checkout.display()))?;
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) == Some("wasm") {
-            return Ok(p);
-        }
-    }
-    Err(format!("no .wasm component in {} -- run its build first", checkout.display()))
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("wasm"))
+        .collect();
+    found.sort();
+    found.into_iter().next().ok_or_else(|| {
+        format!("no .wasm component in {} -- run its build first", checkout.display())
+    })
 }
 
 /// Fetch one release artifact into the cache, keyed by its declared digest, and refuse anything
@@ -207,7 +180,7 @@ fn fetch(repo: &str, release: &str, art: &Artifact) -> Result<PathBuf, String> {
         return Ok(path);
     }
     let url = format!("https://github.com/{repo}/releases/download/{release}/{}", art.file);
-    let bytes = crate::store::fetch_url(&url)?;
+    let bytes = store::fetch_url(&url)?;
     let got = store::digest(&bytes);
     if got != art.sha256 {
         return Err(format!(
@@ -222,7 +195,7 @@ fn fetch(repo: &str, release: &str, art: &Artifact) -> Result<PathBuf, String> {
 
 impl Game {
     /// The boards this game publishes, from `cartridge.json`'s catalogue.
-    pub fn catalogue(&self) -> Vec<&serde_json::Value> {
+    pub fn catalogue(&self) -> Vec<&Value> {
         self.manifest
             .get("maps")
             .and_then(|v| v.as_array())
@@ -230,19 +203,19 @@ impl Game {
             .unwrap_or_default()
     }
 
-    /// A limit from the manifest, so no number the game owns is ever typed into this binary.
     pub fn limit(&self, key: &str, dflt: u64) -> u64 {
-        self.manifest
-            .get("limits")
-            .and_then(|l| l.get(key))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(dflt)
+        self.number("limits", key, dflt)
     }
 
     pub fn budget(&self, key: &str, dflt: u64) -> u64 {
+        self.number("budgets", key, dflt)
+    }
+
+    /// No number the game owns is ever typed into this binary.
+    fn number(&self, table: &str, key: &str, dflt: u64) -> u64 {
         self.manifest
-            .get("budgets")
-            .and_then(|b| b.get(key))
+            .get(table)
+            .and_then(|t| t.get(key))
             .and_then(|v| v.as_u64())
             .unwrap_or(dflt)
     }

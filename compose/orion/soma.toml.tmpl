@@ -1,0 +1,135 @@
+# Orion config for the SOMA+JODI unit: the REST surface and the four clocks, in cluster mode.
+# Requires 1.7.0. The Kalam half is kalam.toml.tmpl.
+#
+# ${NAME:-default} is substituted by orion-server from the container's environment before the file
+# is parsed, so one image serves every environment and nothing is written to disk. Credentials are
+# env:// references the server resolves itself, after parsing.
+#
+# Values that must agree with kalam.toml.tmpl are asserted by scripts/check/configs.sh.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+data_mounts = ["/v1"]
+shutdown_drain_secs         = ${ORION_SHUTDOWN_DRAIN_SECS:-30}
+shutdown_force_timeout_secs = ${ORION_SHUTDOWN_FORCE_SECS:-30}
+
+# Required, not optional: an Orion singleton is a row in the state database, so "cluster-wide"
+# means "state-database-wide". Two servers over two state databases are two tb-count clocks folding
+# the same matches -- which the fence makes safe, but not once.
+[cluster]
+enabled                = ${ORION_CLUSTER_ENABLED:-true}
+redis_url              = "env://REDIS_URL"
+epoch_poll_interval_ms = 2000
+instance_id            = "${ORION_INSTANCE_ID:-}"
+
+[storage]
+url = "env://ORION_STATE_DB_URL"
+# A cluster may not migrate at boot: cluster.enabled with auto_migrate is refused at startup.
+# entrypoint.sh runs `orion-server migrate` first, which is the deploy step this asks for.
+auto_migrate = false
+
+[vars]
+# ------------------------------------------------------------------------------- SOMA
+app_url            = "${APP_URL:-http://localhost:5173/}"
+# Exactly as registered with GitHub. https only, except on a loopback host.
+oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github/callback}"
+# Must substitute to a bare TOML boolean; entrypoint.sh normalises SOMA_COOKIE_SECURE. Browsers
+# will not store a Secure cookie from an http:// origin, so a plain-http stack sets false.
+cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
+# How soon after a season closes the next may open.
+season_gap_days    = ${SEASON_GAP_DAYS:-1}
+
+# ------------------------------------------------------------------------------- JODI
+# Every number below is PROVISIONAL: policy guesses only a running ladder can tune. They live here
+# rather than in the definitions because a definition is versioned and content-hashed, and changing
+# a pairing rate should not be a new workflow version.
+game = "ants"
+
+# A preset names a world and how many seats play it -- THE PRESET DECIDES THE SEAT COUNT.
+presets = [
+  { name = "standard", players = 2 },
+  { name = "maze",     players = 2 },
+  { name = "cell",     players = 2 },
+]
+
+# pair_depth_target is a staleness cap, never the signal -- demand is the signal. It is also why
+# the autoscaler must never read queue depth: this caps the queue, so depth would cap the fleet at
+# pair_depth_target/wave_k and look correct doing it.
+count_batch       = 50
+pair_depth_target = 64
+
+# In-flight policy: `burst` matches at once for a new version, `steady_cap` once placed, none of
+# its own once sigma is at or below `settled_sigma`.
+burst         = 8
+steady_cap    = 2
+settled_sigma = 3.0
+
+cross_class_fraction = 0.20
+repair_cap = 3
+
+# MUST EQUAL Kalam's strike_ceiling, or count judges a trial by a rule the wave did not play by.
+forfeit_strikes = 5
+
+# The rating prior. compose/db-init/30-seed.sql gives the baselines these same numbers, because a
+# baseline's first fold reads these as its own.
+prior_mu        = 25.0
+prior_sigma     = 8.333333333333334
+sigma_inflation = 2.0
+
+ts_beta             = 4.166666666666667
+ts_tau              = 0.08333333333333333
+ts_draw_probability = 0.10
+
+# Admission: where a release's assets are fetched from, and the batch, timeout and retry policy.
+release_base = "${RELEASE_BASE:-https://github.com/}"
+admit_batch        = 4
+admit_timeout_s    = 180
+admit_attempts_max = 3
+admit_deadline_ms = 5000
+revalidate_batch = 4
+
+# The ONNX surface a submission may use.
+opset_min = 13
+opset_max = 19
+op_allowlist = [
+  "Abs", "Add", "And", "ArgMax", "ArgMin", "AveragePool", "BatchNormalization", "Cast", "Ceil",
+  "Clip", "Concat", "Constant", "ConstantOfShape", "Conv", "Div", "Elu", "Equal", "Erf", "Exp",
+  "Expand", "Flatten", "Floor", "Gather", "GatherElements", "Gemm", "GlobalAveragePool",
+  "GlobalMaxPool", "Greater", "HardSigmoid", "Identity", "InstanceNormalization", "LayerNormalization",
+  "LeakyRelu", "Less", "Log", "LogSoftmax", "MatMul", "Max", "MaxPool", "Mean", "Min", "Mul", "Neg",
+  "Not", "Or", "Pad", "Pow", "PRelu", "Range", "Reciprocal", "ReduceMax", "ReduceMean", "ReduceMin",
+  "ReduceSum", "Relu", "Reshape", "Resize", "Selu", "Shape", "Sigmoid", "Sign", "Slice", "Softmax",
+  "Softplus", "Split", "Sqrt", "Squeeze", "Sub", "Sum", "Tanh", "Tile", "Transpose", "Unsqueeze",
+  "Where",
+]
+
+# An entry is the key or `sha256:<64 hex>` of it, so a deployment keeps the digest in config and
+# the key in its secret store. The list exists for zero-downtime rotation.
+[admin_auth]
+enabled = true
+api_keys = ["${ORION_ADMIN_KEY}"]
+
+[plugins]
+enabled = true
+
+# Non-empty on BOTH units on purpose: a half-configured trust posture is worse than none, because
+# the unchecked node is the one nobody remembers. Minted by scripts/setup/trust-keygen.sh, applied
+# by scripts/setup/sign-plugins.sh.
+[plugins.trust]
+public_keys = ["${TB_TRUST_PUBLIC_KEY}"]
+
+[cron]
+# An INNER deadline under server.shutdown_force_timeout_secs, so it can only make the wait shorter.
+shutdown_timeout_secs = ${ORION_CRON_SHUTDOWN_SECS:-60}
+
+# Soma reaches Postgres through raw db_read, so these bind no endpoint today; set so a dialect task
+# added later inherits sane numbers.
+[query]
+default_limit = 50
+max_limit     = 200
+
+# Jodi's clocks carry `errors_only: true` per channel, so a clean run writes no trace and a broken
+# one is kept in full -- which is what makes `sync` affordable.
+[trace_storage]
+mode = "sync"

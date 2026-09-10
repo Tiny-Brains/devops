@@ -1,36 +1,22 @@
-# The games this CLI can play, and where their artifacts come from.
+# The games this CLI can play, and where their artifacts come from -- the same four things
+# compose/loader/run.sh writes onto the `games` row, in a form that needs no database and no
+# network. So a competitor resolves a game offline, against THE SAME digest string the ladder pins.
 #
-# devops already IS the game registry: `loader/run.sh` writes `games.slug`, `manifest`,
-# `active_engine_digest` and `reference_observations` onto the game row from each cartridge's
-# committed artifacts. This file is the same four things, in a form that needs no database and no
-# network -- so a competitor resolves a game offline, and the digest they play against is THE SAME
-# STRING the ladder pins in `games.active_engine_digest` and `seasons.engine_digest`.
+#   path      a sibling checkout. The digest is whatever the file hashes to, and is REPORTED rather
+#             than pinned: it changes on every build, so pinning it could only ever be wrong.
+#   release   published artifacts, cached under ~/.cache/tinybrains/cartridges/<digest>/. PINNED:
+#             a file that does not hash to what is declared here is refused, not used.
 #
-# An entry resolves one of two ways.
-#
-#   path      A checkout beside this one. What a cartridge author uses: the board they just
-#             generated and the component they just built, with no release and no upload. The
-#             digest is whatever the file hashes to, and is REPORTED rather than pinned -- it
-#             changes on every build, so pinning it could only ever be wrong.
-#
-#   release   The published artifacts, fetched once and cached under
-#             ~/.cache/tinybrains/cartridges/<digest>/. PINNED: a file that does not hash to what
-#             is declared here is refused, not used.
-#
-# Adding a game is an entry here and no Rust at all. That is the claim ants/docs/cartridge.md makes
-# about the platform -- "adding a game deploys nothing" -- and this file is where it gets tested.
+# Adding a game is an entry here and no Rust at all.
 
 [games.ants]
 name = "Ants"
-# The sibling checkout, which is the layout devops/docker-compose.yml already assumes.
+# The sibling checkout the compose file already assumes.
 path = "../../ants"
 
-# What the same entry looks like once a release is cut. Swap `path` for these; `tinybrains games`
-# reports which way it resolved, so there is never a question of which one is in force.
+# Once a release is cut, swap `path` for these. `tinybrains games` reports which way it resolved.
 #
 # repo      = "Tiny-Brains/ants"
 # release   = "v1.0.0"
-# component = { file = "tb-ants.wasm",      sha256 = "sha256:..." }   # == engine_digest
-# manifest  = { file = "cartridge.json",    sha256 = "sha256:..." }   # carries the board catalogue
-# viewer    = { file = "viz-dist.tgz",      sha256 = "sha256:..." }
-# reference = { file = "observations.json", sha256 = "sha256:..." }
+# component = { file = "tb-ants.wasm",   sha256 = "sha256:..." }   # == engine_digest
+# manifest  = { file = "cartridge.json", sha256 = "sha256:..." }   # carries the board catalogue

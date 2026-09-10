@@ -34,8 +34,7 @@ pub fn serve(viz: &Path, replay_json: &str, open: bool) -> Result<(), String> {
             Err(_) => continue,
         };
         if let Err(e) = respond(&mut s, viz, replay_json) {
-            // A browser closing a connection mid-response is ordinary, not an error worth the
-            // user's attention; anything else is printed and the server keeps serving.
+            // A browser closing a connection mid-response is ordinary.
             if !e.contains("Broken pipe") {
                 eprintln!("  {e}");
             }
@@ -71,8 +70,7 @@ fn respond(s: &mut TcpStream, viz: &Path, replay_json: &str) -> Result<(), Strin
         "/" => send(s, "text/html; charset=utf-8", PAGE.as_bytes()),
         "/replay.json" => send(s, "application/json", replay_json.as_bytes()),
         p => {
-            // Everything else is the viewer bundle. Path traversal is refused rather than
-            // sanitised: there is exactly one directory this server may read from.
+            // Traversal is refused rather than sanitised: one directory, no exceptions.
             let rel = p.trim_start_matches('/');
             if rel.contains("..") {
                 return send(s, "text/plain", b"no");
@@ -100,8 +98,7 @@ fn mime(p: &Path) -> &'static str {
     match p.extension().and_then(|e| e.to_str()) {
         Some("js") => "text/javascript; charset=utf-8",
         Some("json") => "application/json",
-        // The transpiled core module is fetched with `compileStreaming`, which insists on this
-        // type and fails with a message about the MIME type rather than about the module.
+        // `compileStreaming` insists on this and fails talking about the MIME type, not the module.
         Some("wasm") => "application/wasm",
         Some("css") => "text/css; charset=utf-8",
         _ => "application/octet-stream",
@@ -118,7 +115,6 @@ fn send(s: &mut TcpStream, ctype: &str, body: &[u8]) -> Result<(), String> {
     s.flush().map_err(|e| e.to_string())
 }
 
-/// Where a game's viewer bundle is, from a resolved game.
 pub fn viz_dir(game: &crate::registry::Game) -> Result<PathBuf, String> {
     let from_checkout = game
         .component
@@ -142,8 +138,6 @@ const PAGE: &str = r##"<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TinyBrains replay</title>
 <style>
-  /* The platform's own two grounds, written out: this page ships no design-system stylesheet, and
-     the viewer's chrome falls back to the same palette and follows prefers-color-scheme with it. */
   html,body { margin:0; height:100%; background:#F5F8FF; color:#142642; }
   @media (prefers-color-scheme: dark) { html,body { background:#090F1D; color:#EEF3FF; } }
   #app { height:100%; display:flex; }
@@ -156,13 +150,11 @@ const PAGE: &str = r##"<!doctype html>
 <body>
 <div id="app"><div id="boot">decoding the match…</div></div>
 <script type="module">
-  // The viewer is the cartridge's own bundle, served from viz/dist. The page is a page.
   import { mount, optsFromHash } from "./viz.js";
   try {
     const replay = await (await fetch("./replay.json")).json();
     document.getElementById("boot")?.remove();
-    // A link can point at a moment: #turn=84, or #from=40&to=60&autoplay=1. A replay is evidence,
-    // and evidence gets cited by turn rather than described.
+    // A link can point at a moment: #turn=84, or #from=40&to=60&autoplay=1.
     await mount("#app", replay, { autoplay: false, ...optsFromHash() });
   } catch (e) {
     document.getElementById("app").innerHTML =

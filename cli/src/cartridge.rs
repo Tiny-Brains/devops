@@ -67,9 +67,8 @@ impl Cartridge {
         Ok(Cartridge { engine, component, linker })
     }
 
-    /// One call. A fresh instance every time, because the sandbox keeps nothing between
-    /// invocations and a host that reused one would be testing a cartridge the platform will
-    /// never run.
+    /// A fresh instance every call: the sandbox keeps nothing between invocations, and a host
+    /// that reused one would be testing a cartridge the platform never runs.
     pub fn invoke(&self, function: &str, input: &Value) -> Result<Value, Fault> {
         let mut store = Store::new(&self.engine, ());
         let plugin = Plugin::instantiate(&mut store, &self.component, &self.linker)

@@ -1,26 +1,19 @@
 #!/usr/bin/env bash
-# DRIVE THE AUTOSCALER'S QUERY -- 07 §5, tracker §4.2.
+# Drive the autoscaler's query against staged ladders, and check the four things claimed of it.
 #
-#   devops/scripts/verify/autoscale.sh          # needs the db container up
-#
-# §5 writes the query and argues four things about it. This runs it against staged ladders in a
-# scratch copy of the live database and checks each one, because an argument about a query is not
-# the same as the query:
+#   scripts/check/autoscale.sh          # needs the db container up
 #
 #   1. it reads DEMAND, and demand LEADS the queue -- a replica is asked for before the rows it
 #      will claim exist;
 #   2. it must NEVER read queue depth (decision 43). `pair_depth_target` caps the queue at 64, so a
-#      scaler reading depth would cap the fleet at 64/K and look correct doing it. The proof is a
-#      ladder whose want is far above the depth cap: replicas must follow want, not depth;
-#   3. the latency guard is a NUDGE -- exactly one replica above the computed target while the
-#      oldest pending row is older than the guard, never a jump;
-#   4. `engine_digest = s.engine_digest` keeps a rolling deploy from oscillating -- the old engine's
-#      rows are drained by replicas that are going away, and counting them would ask for
-#      new-engine replicas to cover work they cannot claim.
+#      scaler reading depth would cap the fleet at 64/K and look correct doing it;
+#   3. the latency guard is a NUDGE -- exactly one replica above the computed target, never a jump;
+#   4. `engine_digest = s.engine_digest` keeps a rolling deploy from oscillating: the old engine's
+#      rows are drained by replicas that are going away, and counting them would ask for new-engine
+#      replicas to cover work they cannot claim.
 #
-# The query itself is autoscaler.sql, built by substituting 02 §4's demand view -- jodi's, verbatim
-# out of tb-pair-run.json -- into §5's skeleton, so what runs here is what pair already computes
-# plus §5's arithmetic on top.
+# autoscaler.sql is jodi's own demand view, verbatim out of tb-pair-run.json, with the scaling
+# arithmetic on top -- so what runs here is what pair already computes.
 #
 # Nothing touches the live database: the scratch copy is dropped at the end.
 set -euo pipefail
@@ -29,7 +22,7 @@ cd "$(dirname "$0")"
 DB_CONTAINER="${DB_CONTAINER:-tinybrains-db-1}"
 DB_USER="${DB_USER:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_USER)}"
 LIVE="${DB_NAME:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_DB)}"
-SCRATCH=l07_scale
+SCRATCH=tb_scale_bench
 psql() { docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" "$@"; }
 
 echo "==> scratch database from the live one"
@@ -40,9 +33,9 @@ docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" -d "$LIVE" --no-owner --no-pri
 
 GAME_ID=$(psql -d "$SCRATCH" -At -c "SELECT id FROM games WHERE slug = 'ants'")
 
-# Every non-baseline version into the live season, so the ladder has a field at all. On the live
-# stack the versions sit in closed seasons 1 and 2 and season 3 holds only baselines, which is why
-# its demand is structurally zero -- true of the stack, not of the query.
+# Every non-baseline version into the live season, so the ladder has a field at all: on the live
+# stack the versions sit in closed seasons and the open one holds only baselines, which makes its
+# demand structurally zero -- true of the stack, not of the query.
 psql -d "$SCRATCH" -q -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 ALTER TABLE models DROP CONSTRAINT IF EXISTS models_one_active_excl;
 UPDATE models md SET season_id = (SELECT id FROM seasons WHERE closed_at IS NULL)
@@ -80,15 +73,15 @@ settle()   { stage "UPDATE ratings SET sigma = 0.7;"; }
 run() {  # $1 label, $2..: the eight parameters
   local label="$1"; shift
   printf '\n--- %s\n' "$label"
-  python3 - "$GAME_ID" "$@" > /tmp/l07-scale.sql <<'PYEOF'
+  python3 - "$GAME_ID" "$@" > /tmp/tb-scale.sql <<'PYEOF'
 import sys, pathlib
 gid, *p = sys.argv[1:]
 q = pathlib.Path("autoscaler.sql").read_text().rstrip().rstrip(";")
 print("PREPARE a AS"); print(q + ";")
 print(f"EXECUTE a('{gid}', {', '.join(p)});")
 PYEOF
-  psql -d "$SCRATCH" -v ON_ERROR_STOP=1 < /tmp/l07-scale.sql | sed -n '2,5p'
-  rm -f /tmp/l07-scale.sql
+  psql -d "$SCRATCH" -v ON_ERROR_STOP=1 < /tmp/tb-scale.sql | sed -n '2,5p'
+  rm -f /tmp/tb-scale.sql
 }
 
 DIGEST=$(psql -d "$SCRATCH" -At -c "SELECT active_engine_digest FROM games WHERE slug='ants'")

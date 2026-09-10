@@ -1,9 +1,8 @@
-# Filled-in values: client secrets, session keys, database passwords.
-# The committed template is .env.example.
+# Filled-in values: client secrets, session keys, database passwords. The template is .env.example.
 .env
 .env.local
-orion/orion.local.toml
+compose/orion/orion.local.toml
 
-# The plugin trust root -- devops/scripts/trust-keygen.sh writes it. Never committed:
-# the server only verifies, so a key beside the thing it signs proves nothing.
+# The plugin trust root -- scripts/setup/trust-keygen.sh writes it. Never committed: the server
+# only verifies, so a key beside the thing it signs proves nothing.
 keys/

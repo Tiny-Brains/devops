@@ -77,14 +77,14 @@ are the two ways this topology is wrong rather than merely mis-sized.
 
 ## 3. One template becomes two
 
-Today `devops/orion/orion.toml.tmpl` is one file with one `[vars]` block sectioned by owner, and
+Until this page, `devops/orion/orion.toml.tmpl` was one file with one `[vars]` block sectioned by owner, and
 its header already says why: *"the day devops gives a package a server of its own, its section
 moves with it and nothing in the package repos changes."* This page is that day.
 
 | New file | Holds | `[vars]` sections |
 |---|---|---|
-| `devops/orion/soma.toml.tmpl` | `data_mounts`, `[cluster]`, `[storage]` on Postgres, `[plugins]` for Jodi's two, `[cron]` | **SOMA** and **JODI**, verbatim |
-| `devops/orion/kalam.toml.tmpl` | no `data_mounts`, no `[cluster]`, `[storage]` on local SQLite, `[plugins]` for `tb.ants`, `[cron]`, `[engine]` | **KALAM**, verbatim |
+| `devops/compose/orion/soma.toml.tmpl` | `data_mounts`, `[cluster]`, `[storage]` on Postgres, `[plugins]` for Jodi's two, `[cron]` | **SOMA** and **JODI**, verbatim |
+| `devops/compose/orion/kalam.toml.tmpl` | no `data_mounts`, no `[cluster]`, `[storage]` on local SQLite, `[plugins]` for `tb.ants`, `[cron]`, `[engine]` | **KALAM**, verbatim |
 
 The sections move unchanged. What the split creates that one file could not have is **a value in two
 places that must agree**, and there are exactly three:
@@ -95,7 +95,7 @@ places that must agree**, and there are exactly three:
 | `prior_mu`, `prior_sigma` | Soma's season create seeds carried baselines; Jodi's count seeds at promotion | two priors on one ladder. Both are in the *same* file after the split, so this one is safe — noted because it stops being safe the day Soma leaves Jodi |
 | `engine_digest` (Kalam) = `games.active_engine_digest` (the deploy) | the claim filters on it | the wave claims nothing, for ever. §9 |
 
-**The check is a script, not a convention.** `devops/scripts/check-configs.sh` parses both templates
+**The check is a script, not a convention.** `devops/scripts/check/configs.sh` parses both templates
 with the defaults applied and asserts the three equalities, and it runs in the deploy before either
 config is shipped. A rule that lives only in a comment is one rebase from being wrong, and the
 failure mode of each of the three is silence.
@@ -240,7 +240,7 @@ claiming because the fleet is busy elsewhere, without turning a single stuck row
 Mid-deploy the old engine's rows are being drained by replicas that are going away; counting them
 would ask for new-engine replicas to cover work they cannot claim. §9.
 
-**Driven, 8 September 2026.** `scripts/verify/autoscale.sh` substitutes jodi's demand view --
+**Driven, 8 September 2026.** `scripts/check/autoscale.sh` substitutes jodi's demand view --
 verbatim out of `tb-pair-run.json` -- into the skeleton above and runs it over six staged ladders in
 a scratch copy of the real database. All four claims hold: want is 6 with the queue still **empty**,
 so demand leads it; a queue pinned at `pair_depth_target` = 64 asks for **5** replicas rather than
@@ -313,7 +313,7 @@ Layer 03's banner records the trap and its fix, and it must survive into every r
 `trap 'kill -TERM $PID'; wait $PID` returns *when the trap fires*, so the script falls off its end
 and the container exits while Orion is still draining — measured at `docker stop -t 300` returning in
 zero seconds with two rows still `running`. **Wait again, in a loop, until the process is gone.**
-`devops/orion/entrypoint.sh` has this; the Kalam image inherits the same file.
+`devops/compose/orion/entrypoint.sh` has this; the Kalam image inherits the same file.
 
 ---
 
@@ -364,7 +364,7 @@ lapses to failure. It would bind well above the residency number.
 measurable fraction of database capacity, and then raise it rather than adding replicas to absorb
 it.
 
-**The spike has now run** — `scripts/verify/run.sh`, against a scratch copy of the real database
+**The spike has now run** — `scripts/check/claim-load.sh`, against a scratch copy of the real database
 so the index statistics and row widths are the real ones. One claim costs **0.68 ms** at a single
 client and the table sustains **~1,470 claims/s** at that client, rising to ~11,000 at 64. **Queue
 depth does not move it**: an empty queue and a queue at `pair_depth_target` measure the same at every
@@ -498,7 +498,7 @@ ALTER ROLE kalam WITH LOGIN PASSWORD :'pw';
 ```
 
 from the orchestrator's secret store, not from a compose default. `kalam/scripts/check-sql.sh`
-already asserts the grants cover what the wave writes and no more, and `soma/scripts/verify/run.sh` proves
+already asserts the grants cover what the wave writes and no more, and `soma/scripts/check/claim-load.sh` proves
 Postgres refuses it everything else; both should run against the deployed database once, as a
 deploy-time assertion rather than a local one.
 
@@ -583,7 +583,7 @@ load is nowhere near a single instance's measured ceiling and the clocks do not 
 **Driven on the local stack, 8 September 2026** — the split is built, and these ran:
 
 1. **The config split (§3).** `orion.toml.tmpl` is now `soma.toml.tmpl` and `kalam.toml.tmpl`, each
-   parsing through `orion-server validate-config`. `devops/scripts/check-configs.sh` asserts the
+   parsing through `orion-server validate-config`. `devops/scripts/check/configs.sh` asserts the
    three cross-file values and the four structural rules, and passes.
 2. **Cluster mode (§4.1).** Soma runs with `[cluster] enabled`, Postgres state and Redis, and
    `auto_migrate = false` with `migrate` as the entrypoint's step. All four clocks run as
@@ -617,7 +617,7 @@ load is nowhere near a single instance's measured ceiling and the clocks do not 
 8. **§8.1's store, built and driven.** The three axons run on MinIO over SigV4 with the
    `axon-store` volume removed; the four existing objects were migrated into the bucket, and 24
    matches then played across two replicas with **0 failed**, every weight and adapter fetched from
-   S3. `devops/scripts/seed-baselines.sh` writes through a signed PUT now rather than `docker cp`.
+   S3. `devops/scripts/dev/seed-baselines.sh` writes through a signed PUT now rather than `docker cp`.
 
 **Still not verified**: the autoscaler's query against a live demand view (§5); a rolling engine
 deploy with two replicas on different digests, which is also tracker §3.4's second walk — the rig

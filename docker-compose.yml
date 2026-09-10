@@ -1,66 +1,95 @@
-# TinyBrains local stack: TWO Orion units, a loader that installs into both, and the processes
-# that are not Orion. docs/deployment.md §2 is the topology this file is; §14's build order is why it exists
-# locally before it exists anywhere else.
+# TinyBrains local stack. Two Orion units, a one-shot loader that installs into both, and the
+# processes that are not Orion. docs/deployment.md §2 is the topology.
 #
-# This directory is THE DEPLOYMENT SURFACE, and that is the whole point of it. soma/, jodi/ and
-# kalam/ are separate repos that each ship a self-contained Orion package and know nothing about
-# the topology; this file decides how many servers there are and which package goes in which.
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up --build -d                  # one replica -> http://localhost:5173
+#   docker compose --profile fleet up --build -d  # two, for the failure walks
+#   docker compose run --rm loader                # after editing soma/jodi/kalam
 #
-# UNTIL LAYER 07 THIS WAS ONE ORION holding all three packages. It is now the two the design always
-# said it would be, and the split is not a scaling choice in either direction:
+# Three invariants this file exists to hold:
 #
-#   soma      Soma's REST surface and Jodi's four clocks, in CLUSTER MODE over the shared
-#             orion_state database and a Redis. Required, not optional: a `forbid` singleton is a
-#             ROW in the state database, so "cluster-wide" means "state-database-wide". Two Orions
-#             over one orion_state are one scheduler; two over two are TWO tb-count clocks folding
-#             the same matches -- which the fence makes safe but not once.
+#   soma is in CLUSTER MODE, kalam replicas are NOT (decision 41). An Orion singleton is a row in
+#   the state database, so two somas over one orion_state are one scheduler, while N replicas over
+#   one shared state make `wave` fleet-wide -- exactly one replica ever plays and the other N-1
+#   poll a held row looking perfectly healthy.
 #
-#   kalam-N   one Orion PER REPLICA, single instance, LOCAL SQLITE, one axon beside each. Also
-#             required, and for the mirror-image reason (decision 41): put N replicas over one
-#             shared state and the `wave` singleton becomes fleet-wide, so EXACTLY ONE REPLICA
-#             EVER PLAYS and the other N-1 poll a held row looking perfectly healthy. Kalam's
-#             fence is not Orion's -- it is the leased claim on `matches` -- so nothing is lost.
+#   BOTH AXON ROLES SHARE ONE STORE. Admission mirrors what it verified under the bytes' hash and
+#   replicas fetch by that hash; two stores means admission succeeds and every match the version is
+#   paired for fails at the residency barrier, quietly. Locally one bucket; across hosts, R2.
 #
-# ONE REPLICA BY DEFAULT, TWO WITH A PROFILE. `docker compose up` gives kalam-1 and axon-1, which
-# is the cheap everyday stack. `docker compose --profile fleet up` adds kalam-2 and axon-2, which
-# is what the two failure walks tracker §3.4 owes need: kill a replica mid-wave and watch its rows
-# replayed on the other, and roll one replica onto a new engine digest and watch the old drain.
-#
-# AXON IS A SIDECAR, NOT A SERVICE. Each axon shares its replica's network namespace
-# (`network_mode: service:kalam-N`), so the wave reaches it at 127.0.0.1:9090 -- which is exactly
-# what kalam/connectors/model-loader.json already ships as its committed default, and exactly the
-# deployed topology of one loader beside every replica. Nothing substitutes a URL any more.
-#
-# THE TWO AXON ROLES SHARE ONE STORE, and that is a correctness property rather than a saving. The
-# admission instance mirrors what it verified under the bytes' hash; a replica fetches by that
-# hash. Two stores would mean admission succeeds and every match the version is then paired for
-# fails at the residency barrier -- quietly, and a long way from the cause. Locally that is one
-# volume; ACROSS HOSTS THERE IS NO SHARED VOLUME, which is why docs/deployment.md §8.1 makes S3/R2 with
-# SigV4 a precondition for the fleet rather than an optimisation. They are separate processes
-# because the binary refuses to be both: a replica's fetch allowlist is empty whatever the
-# environment says, and admission answers /play with a 404.
-#
-# THE ONE NUMBER THREE THINGS MUST AGREE ON is the engine digest: the plugin Orion loads (keyed by
-# sha256 over the component), `[vars] engine_digest` the claim filters on, and
-# `games.active_engine_digest` that pair stamps on every row. A mismatch is not an error anywhere
-# -- the wave just claims nothing, for ever. So nobody types it: each kalam replica's entrypoint
-# and the `loader` both derive it from kalam/plugins/tb-ants/tb-ants.wasm.
-#
-#   cd devops
-#   cp .env.example .env               # then fill in the blanks
-#   docker compose up --build          # one replica
-#   docker compose --profile fleet up --build   # two, for the failure walks
-#   open http://localhost:5173
-#
-# After editing a package:  docker compose run --rm loader
-# Before shipping a config: scripts/check-configs.sh
-#
-# The web container serves the built SPA and proxies /v1 to soma, so the browser only ever sees
-# one origin. That is what lets Soma's HttpOnly session cookie work and is why the port is
-# published as 5173 -- it keeps the OAuth callback URL registered with GitHub identical to the one
-# `npm run dev` uses.
+#   THE ENGINE DIGEST IS DERIVED, NEVER TYPED. The plugin Orion loads, the `[vars] engine_digest`
+#   the claim filters on, and `games.active_engine_digest` must agree; a mismatch is not an error
+#   anywhere -- the wave just claims nothing, for ever. Each entrypoint and the loader derive it
+#   from kalam/plugins/tb-ants/tb-ants.wasm.
 
 name: tinybrains
+
+# ---------------------------------------------------------------------------- shared fragments
+
+x-trust: &trust
+  TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run scripts/setup/trust-keygen.sh}
+  ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run scripts/setup/admin-key.sh}
+
+x-replay-store: &replay-store
+  R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+  R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
+  R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
+  R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+
+# The model store both axon roles mount. See the header.
+x-model-store: &model-store
+  AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
+  AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
+  AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
+  AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
+  AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+
+# A replica is disposable: Orion state is a SQLite file with no volume behind it, holding the
+# loaded package and nothing else. A crash costs one wave, replayed by the next claim.
+x-kalam: &kalam
+  build:
+    context: ./compose/orion
+    args:
+      ORION_VERSION: ${ORION_VERSION:-1.7.0}
+  volumes:
+    - ./compose/orion/kalam.toml.tmpl:/etc/orion/kalam.toml.tmpl:ro
+    # Only for the engine digest, derived at boot.
+    - ../kalam:/pkg/kalam:ro
+  depends_on:
+    db:
+      condition: service_healthy
+  # drain is a fixed sleep and buys a routeless cron-only node nothing; force is the real outer
+  # bound on a draining wave. stop_grace_period must exceed drain + force, or compose SIGKILLs the
+  # drain and leaves rows `running` with a live lease and no error anywhere.
+  stop_grace_period: ${KALAM_STOP_GRACE:-2760s}
+  restart: unless-stopped
+
+x-kalam-env: &kalam-env
+  <<: [*trust, *replay-store]
+  ORION_CONFIG_TEMPLATE: /etc/orion/kalam.toml.tmpl
+  KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
+  ORION_SHUTDOWN_DRAIN_SECS: ${KALAM_SHUTDOWN_DRAIN_SECS:-5}
+  ORION_SHUTDOWN_FORCE_SECS: ${KALAM_SHUTDOWN_FORCE_SECS:-2700}
+  ORION_CRON_SHUTDOWN_SECS: ${KALAM_CRON_SHUTDOWN_SECS:-2700}
+
+# One axon per replica, sharing the replica's network namespace, so the wave reaches it at
+# 127.0.0.1:9090 -- the committed default in kalam/connectors/model-loader.json, and the deployed
+# sidecar topology. The cost is that this container publishes no ports of its own.
+x-axon: &axon
+  build:
+    context: ../axon
+  restart: unless-stopped
+
+x-axon-env: &axon-env
+  <<: *model-store
+  AXON_MODE: replica
+  AXON_BIND: 127.0.0.1:9090
+  # Must exceed wave_k x seats x max_class_bytes. Small here because the local stack holds a
+  # handful of Micro models; raise it, or lower wave_k, before a real class mix arrives.
+  AXON_MEMORY_BUDGET_BYTES: ${AXON_MEMORY_BUDGET_BYTES:-1073741824}
+  AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
+
+# ---------------------------------------------------------------------------- services
 
 services:
   db:
@@ -71,14 +100,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-soma}
     volumes:
       - db-data:/var/lib/postgresql/data
-      # Run once, on first initialisation of the volume, in filename order: create Orion's state
-      # database, apply Soma's schema, seed the one game and its baselines. Re-running them means
-      # `docker compose down -v` first. Everything a database needs AFTER that -- the kalam role's
-      # password, the engine digest, the cartridge manifest -- is the loader's, and idempotent.
-      - ./db-init/10-orion-state.sh:/docker-entrypoint-initdb.d/10-orion-state.sh:ro
+      # Once only, on first initialisation of the volume, in filename order. Re-running them means
+      # `docker compose down -v`; everything after that is the loader's, and idempotent.
+      - ./compose/db-init/10-orion-state.sh:/docker-entrypoint-initdb.d/10-orion-state.sh:ro
       - ../soma/migrations/0001_init.sql:/docker-entrypoint-initdb.d/20-soma-schema.sql:ro
       - ../soma/migrations/0002_sessions.sql:/docker-entrypoint-initdb.d/25-soma-sessions.sql:ro
-      - ./db-init/30-seed.sql:/docker-entrypoint-initdb.d/30-seed.sql:ro
+      - ./compose/db-init/30-seed.sql:/docker-entrypoint-initdb.d/30-seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soma} -d ${POSTGRES_DB:-soma}"]
       interval: 5s
@@ -86,18 +113,9 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
-    # Not published by default -- nothing outside the compose network needs it.
-    # Uncomment to run psql from the host.
-    # ports:
-    #   - "5432:5432"
 
-  # --------------------------------------------------------------------------- redis
-  #
-  # Cluster mode's second shared backend, and it refuses to start without one: dedup windows,
-  # response caches and per-channel rate limits live here so they mean the same thing across
-  # replicas. Soma's six principal_rate_limit channels move onto it with no channel edit --
-  # build_limiter picks RedisRateLimitBackend whenever cluster_redis is present -- so "10 rps on
-  # /v1/me" becomes a FLEET-WIDE number rather than 10 per node, which is what it always meant.
+  # Cluster mode refuses to start without one. Dedup windows, response caches and per-channel rate
+  # limits live here, so Soma's limits are fleet-wide numbers rather than per-node ones.
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
@@ -109,227 +127,141 @@ services:
       start_period: 3s
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------- soma + jodi
-  #
-  # orion-server 1.7.0 and nothing else: the packages are installed by `loader`, the config is
-  # mounted. The environment is everything the two packages read at run time -- each connector
-  # names its own credential as env://, resolved by the server, so the loader never sees a secret.
-  #
-  # ONE REPLICA LOCALLY, cluster mode ON anyway. That is deliberate: cluster mode changes what the
-  # rate limits mean and where the cron singletons live, and a stack that only turns it on in
-  # production is a stack that has never tested it. Scale with `--scale soma=2` -- the clocks stay
-  # singletons because the singleton is a row in orion_state, which is the whole point.
+  # orion-server and nothing else: packages are installed by `loader`, the config is mounted.
+  # Cluster mode is on with one replica deliberately -- a stack that only turns it on in production
+  # has never tested it.
   soma:
     build:
-      context: ./orion
+      context: ./compose/orion
       args:
         ORION_VERSION: ${ORION_VERSION:-1.7.0}
     volumes:
-      - ./orion/soma.toml.tmpl:/etc/orion/soma.toml.tmpl:ro
+      - ./compose/orion/soma.toml.tmpl:/etc/orion/soma.toml.tmpl:ro
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
+      <<: *trust
       ORION_CONFIG_TEMPLATE: /etc/orion/soma.toml.tmpl
-      # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
-      # a stack that starts with no keys checks no signature and says nothing about it.
-      TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
-      # The admin credential. Required, not defaulted: an unauthenticated admin plane is the one
-      # that installs anything anyone asks it to.
-      ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
       ORION_STATE_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/orion_state
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
 
-      # Two connectors, two credentials. Soma and Jodi share the owner role for now -- Jodi writes
-      # most of the schema, and a dedicated `jodi` role with exactly those grants is worth doing
-      # the way `kalam` was (docs/deployment.md §10, still owed).
       SOMA_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
-      # Jodi's OWN role since docs/deployment.md §10, not the schema owner: SELECT where it reads, INSERT and
-      # UPDATE only where it writes, no DELETE anywhere, and nothing at all on `sessions`. The
-      # connector's `operations: {delete: false}` is the config half of that; this is the half that
-      # survives a config edit.
+      # Jodi's own role, not the schema owner: no DELETE anywhere, nothing at all on `sessions`.
       JODI_DB_URL: postgres://jodi:${JODI_DB_PASSWORD:-jodi-dev-secret}@db:5432/${POSTGRES_DB:-soma}
 
-      # HS256 key for the session tokens and for the sign-in channel's state cookie. Rotating it
-      # invalidates every live session and every sign-in in flight. At least 32 bytes.
+      # HS256 for session tokens and the sign-in state cookie. Rotating it invalidates every live
+      # session and every sign-in in flight. At least 32 bytes.
       SOMA_SESSION_SECRET: ${SOMA_SESSION_SECRET:?set SOMA_SESSION_SECRET in .env}
-
-      # From the GitHub OAuth App, read as env:// by the sign-in channel; the secret never
-      # appears in a trace or a response.
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set GITHUB_CLIENT_ID in .env}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set GITHUB_CLIENT_SECRET in .env}
 
-      # Must match the OAuth App's Authorization callback URL exactly, and must be an address the
-      # *browser* can reach -- it is where GitHub sends the user back, not a container name.
+      # Must match the OAuth App's callback exactly, and must be an address the BROWSER can reach.
       OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github/callback}
       APP_URL: ${APP_URL:-http://localhost:5173/}
 
-      # DEVELOPMENT ONLY. The stack is served over plain http, and browsers will not store a
-      # Secure cookie from an http:// origin -- which breaks sign-in in a way that looks like
-      # nothing happened. Set to 1 (or drop it) the moment the app is behind TLS.
+      # DEVELOPMENT ONLY: browsers will not store a Secure cookie from an http:// origin, which
+      # breaks sign-in in a way that looks like nothing happened. Set to 1 once behind TLS.
       SOMA_COOKIE_SECURE: "${SOMA_COOKIE_SECURE:-0}"
 
-      # The base admission builds a release's two asset URLs on (jodi/docs/admission.md §5, decision 17).
       RELEASE_BASE: ${RELEASE_BASE:-https://github.com/}
-
-      # jodi/docs/rating-and-seasons.md rule 3: how long after a season closes the next one may open. The config carries
-      # the default, but orion-server substitutes ${SEASON_GAP_DAYS} from THIS container's
-      # environment -- so a value only in .env never reaches it, and the gap stays 1 whatever .env
-      # says. A dev stack that wants to reopen immediately sets 0.
+      # orion-server substitutes this from THIS container's environment, so a value only in .env
+      # never reaches it and the gap stays 1 whatever .env says.
       SEASON_GAP_DAYS: ${SEASON_GAP_DAYS:-1}
 
-      # The replay store, read by soma-blobs -- PRESIGNED GET AND NOTHING ELSE. Signing makes no
-      # network call, so what Soma needs here is not an address it can reach: it is the address the
-      # BROWSER will fetch, because SigV4 signs the host and a URL signed for `minio:9000` is a URL
-      # only a container can use. Everything else on this stack keeps the internal name; this one
-      # service is different because its output leaves the network. In a deployment the two are the
-      # same public R2 endpoint and R2_PUBLIC_ENDPOINT can go unset.
+      # PRESIGNED GET ONLY, and signing makes no network call -- so what Soma needs is not an
+      # address it can reach but the address the BROWSER will fetch: SigV4 signs the host, and a URL
+      # signed for `minio:9000` is one only a container can use. In a deployment both are the same
+      # public R2 endpoint and R2_PUBLIC_ENDPOINT can go unset.
       R2_ENDPOINT: ${R2_PUBLIC_ENDPOINT:-${R2_ENDPOINT:-http://127.0.0.1:9000}}
       R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
       R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
       R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
 
-      # This unit serves requests behind a balancer, so the drain window is what it is for.
-      # docs/deployment.md §6.2's table.
       ORION_SHUTDOWN_DRAIN_SECS: ${SOMA_SHUTDOWN_DRAIN_SECS:-30}
       ORION_SHUTDOWN_FORCE_SECS: ${SOMA_SHUTDOWN_FORCE_SECS:-30}
       ORION_CRON_SHUTDOWN_SECS: ${SOMA_CRON_SHUTDOWN_SECS:-60}
-    # Above drain + force, as Orion's own checklist requires.
     stop_grace_period: ${SOMA_STOP_GRACE:-90s}
     restart: unless-stopped
-    # Published so you can curl the API and reach the admin plane directly. The admin API is
-    # unauthenticated by default -- do not expose this port anywhere but a development machine.
+    # Development machines only: the admin plane lives here too.
     ports:
       - "127.0.0.1:8080:8080"
 
-  # --------------------------------------------------------------------------- kalam replicas
-  #
-  # A replica is DISPOSABLE. Its Orion state is a SQLite file on the container filesystem with no
-  # volume behind it, holding the loaded package and nothing else; everything that matters is in
-  # Postgres. Losing it on a restart costs one package load, which the loader does anyway. A crash
-  # costs one wave, replayed from turn zero by the next claim once the lease lapses.
-  #
-  # Each replica declares BOTH its own port and its axon sidecar's, because the sidecar shares this
-  # namespace and a shared namespace has one port table.
   kalam-1:
-    build:
-      context: ./orion
-      args:
-        ORION_VERSION: ${ORION_VERSION:-1.7.0}
-    volumes:
-      - ./orion/kalam.toml.tmpl:/etc/orion/kalam.toml.tmpl:ro
-      # Only for the engine digest, derived from plugins/tb-ants/tb-ants.wasm at boot.
-      - ../kalam:/pkg/kalam:ro
-    depends_on:
-      db:
-        condition: service_healthy
+    <<: *kalam
     environment:
-      ORION_CONFIG_TEMPLATE: /etc/orion/kalam.toml.tmpl
-      # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
-      # a stack that starts with no keys checks no signature and says nothing about it.
-      TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
-      # The admin credential. Required, not defaulted: an unauthenticated admin plane is the one
-      # that installs anything anyone asks it to.
-      ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
-      KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
-      R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
-      R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
-      R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
-      # Optional. Pins the engine instead of deriving it -- which is how you rehearse a rolling
-      # deploy: give kalam-2 the new digest and watch this one drain its own rows and claim none
-      # of the new ones. The loader refuses a pin that disagrees with the vendored file.
+      <<: *kalam-env
+      # Pins the engine instead of deriving it, which is how a rolling deploy is rehearsed: give
+      # kalam-2 the new digest and watch this one drain. The loader refuses a pin that disagrees
+      # with the vendored file.
       KALAM_ENGINE_DIGEST: ${KALAM_1_ENGINE_DIGEST:-}
-      # THE DRAIN -- docs/deployment.md §6.2, and the numbers are not what kalam/docs/design.md wrote down. drain is a
-      # FIXED sleep and buys a routeless cron-only node nothing, so it is small; force is the REAL
-      # outer bound on a draining wave, because the cron worker is a supervised task and main.rs
-      # passes the server key as its deadline. A scale-down costs one WAVE, not one timeout.
-      ORION_SHUTDOWN_DRAIN_SECS: ${KALAM_SHUTDOWN_DRAIN_SECS:-5}
-      ORION_SHUTDOWN_FORCE_SECS: ${KALAM_SHUTDOWN_FORCE_SECS:-2700}
-      ORION_CRON_SHUTDOWN_SECS: ${KALAM_CRON_SHUTDOWN_SECS:-2700}
-    # Above drain + force. compose SIGKILLs the drain if this is short, and kalam/docs/design.md measured what
-    # that costs: rows left `running` with a live lease, no error anywhere, unplayable until the
-    # lease lapses. A drain that half works is indistinguishable from one that works.
-    stop_grace_period: ${KALAM_STOP_GRACE:-2760s}
-    restart: unless-stopped
     ports:
-      # This replica's admin plane. Its axon sidecar is NOT published, and that is the point: the
-      # sidecar binds 127.0.0.1 inside this namespace, so the only thing that can reach it is the
-      # wave running here. Publishing it would not work anyway -- a published port forwards to the
-      # container IP, and nothing is listening there. Reach it with
+      # This replica's admin plane. Its axon sidecar is deliberately not published -- the sidecar
+      # binds 127.0.0.1 inside this namespace, so only the wave running here can reach it:
       #   docker exec tinybrains-kalam-1-1 curl -s 127.0.0.1:9090/healthz
       - "127.0.0.1:8082:8080"
 
-  # The second replica. `--profile fleet`, because two replicas is what the failure walks need and
-  # not what everyday development wants.
   kalam-2:
+    <<: *kalam
     profiles: ["fleet"]
-    build:
-      context: ./orion
-      args:
-        ORION_VERSION: ${ORION_VERSION:-1.7.0}
-    volumes:
-      - ./orion/kalam.toml.tmpl:/etc/orion/kalam.toml.tmpl:ro
-      - ../kalam:/pkg/kalam:ro
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      ORION_CONFIG_TEMPLATE: /etc/orion/kalam.toml.tmpl
-      # The plugin trust root, read by [plugins.trust] in that config. Required, not defaulted:
-      # a stack that starts with no keys checks no signature and says nothing about it.
-      TB_TRUST_PUBLIC_KEY: ${TB_TRUST_PUBLIC_KEY:?run devops/scripts/trust-keygen.sh}
-      # The admin credential. Required, not defaulted: an unauthenticated admin plane is the one
-      # that installs anything anyone asks it to.
-      ORION_ADMIN_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
-      KALAM_DB_URL: postgres://kalam:${KALAM_DB_PASSWORD:-kalam-dev-secret}@db:5432/${POSTGRES_DB:-soma}
-      R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
-      R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
-      R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+      <<: *kalam-env
       KALAM_ENGINE_DIGEST: ${KALAM_2_ENGINE_DIGEST:-}
-      ORION_SHUTDOWN_DRAIN_SECS: ${KALAM_SHUTDOWN_DRAIN_SECS:-5}
-      ORION_SHUTDOWN_FORCE_SECS: ${KALAM_SHUTDOWN_FORCE_SECS:-2700}
-      ORION_CRON_SHUTDOWN_SECS: ${KALAM_CRON_SHUTDOWN_SECS:-2700}
-    stop_grace_period: ${KALAM_STOP_GRACE:-2760s}
-    restart: unless-stopped
     ports:
       - "127.0.0.1:8083:8080"
 
-  # --------------------------------------------------------------------------- the one loader
-  #
-  # One-shot. Declares the deployment facts in the database, makes the replay bucket, and installs
-  # each package into the server that runs it. Orion holds definitions in its state database, so
-  # loading is something you do TO a server, not something that runs beside it: `restart: "no"`,
-  # exit 0. Re-run it after any package edit -- `docker compose run --rm loader` -- and it sweeps
-  # each package by its tag and re-creates it.
-  #
-  # TWO KINDS OF TARGET SINCE LAYER 07. soma and jodi go to SOMA_ORION_ADMIN, and one call reaches
-  # every node of that cluster: an admin mutation advances a shared config epoch and the peers
-  # resync within epoch_poll_interval_ms. kalam goes to KALAM_ORION_ADMINS, a COMMA-SEPARATED LIST
-  # visited one by one, because each replica has its own state database and there is no epoch bus
-  # between them -- the direct consequence of decision 41.
-  #
-  # It also asserts, per replica, that tb.ants is actually loaded. /readyz goes green as soon as
-  # the first generation publishes, so a replica whose package load failed is READY, has no wave
-  # channel, claims nothing, and is INVISIBLE CAPACITY that no dashboard reports (docs/deployment.md §8.2).
-  #
-  # What each load script wants from the environment is listed at the top of that script. The
-  # ALLOW_PRIVATE flags exist because compose service names resolve to private addresses, which
-  # Orion's SSRF guard refuses unless the connector opts in, and the committed packages do not
-  # ship with the guard disabled.
+  # The replica role: fetches by hash, serves /play, and its fetch allowlist is empty whatever the
+  # environment says. Not an Orion package and has no channels -- the wave reaches it over plain
+  # HTTP at max_retries: 0, because a retried /play replays a turn.
+  axon-1:
+    <<: *axon
+    network_mode: "service:kalam-1"
+    depends_on: [kalam-1]
+    environment:
+      <<: *axon-env
+
+  axon-2:
+    <<: *axon
+    profiles: ["fleet"]
+    network_mode: "service:kalam-2"
+    depends_on: [kalam-2]
+    environment:
+      <<: *axon-env
+
+  # The same binary's second role. It differs from a replica in four ways and no others: it accepts
+  # URLs from allowlisted hosts, mirrors what it verified into the store inside /load, serves
+  # /inspect and /validate, and refuses /play with a 404 so a confusion of roles is loud.
+  axon-admission:
+    <<: *axon
+    environment:
+      <<: *model-store
+      AXON_MODE: admission
+      AXON_BIND: 0.0.0.0:9090
+      # The only instance that may reach the internet, and only these two hosts: a github.com
+      # release URL redirects to objects.githubusercontent.com, so both are needed.
+      AXON_FETCH_ALLOW_HOSTS: ${AXON_FETCH_ALLOW_HOSTS:-github.com,objects.githubusercontent.com}
+      # Bigger than a replica's: admission holds up to admit_batch models at once.
+      AXON_MEMORY_BUDGET_BYTES: ${AXON_ADMISSION_MEMORY_BYTES:-2147483648}
+      AXON_IDLE_TTL_S: ${AXON_ADMISSION_IDLE_TTL_S:-120}
+    ports:
+      - "127.0.0.1:9091:9090"
+
+  # One-shot: declares the deployment facts, makes the buckets, and installs each package into the
+  # server that runs it. soma and jodi go to SOMA_ORION_ADMIN and one call reaches every node of
+  # that cluster; kalam goes to each entry of KALAM_ORION_ADMINS in turn, because each replica has
+  # its own state database and there is no epoch bus between them.
   loader:
     build:
-      context: ./loader
+      context: ./compose/loader
     depends_on:
       soma:
         condition: service_healthy
       kalam-1:
         condition: service_healthy
-      # The wave claims matches it cannot play if its loader is absent, and each one costs a lease
-      # and two lapses -- so the package is not installed until the axons answer.
+      # A wave whose loader is absent claims matches it cannot play, each costing a lease and two
+      # lapses -- so the package is not installed until the axons answer.
       axon-1:
         condition: service_healthy
       axon-admission:
@@ -340,65 +272,48 @@ services:
       - ../soma:/pkg/soma:ro
       - ../jodi:/pkg/jodi:ro
       - ../kalam:/pkg/kalam:ro
-      # The cartridge repo, for reference/observations.json once it publishes one; until then the
-      # one worst-case observation axon's tests use stands in (jodi/docs/admission.md).
+      # For reference/observations.json once ants publishes one; until then axon's worst-case
+      # fixture stands in.
       - ../ants:/pkg/ants:ro
       - ../axon/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
-      # The deploy steps that are not `loader` itself, run in this image because this is where the
-      # database and the admin API are both reachable. Mounted rather than baked in, so editing a
-      # step does not need an image rebuild:
+      # The deploy steps that are not `loader` itself, mounted rather than baked in:
       #   docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
-      - ./scripts:/deploy:ro
+      - ./scripts/deploy:/deploy:ro
     environment:
-      # `docker compose --profile fleet up` should also load kalam-2: add its admin to the list,
+      <<: *replay-store
+      # For `--profile fleet`, add kalam-2 here or in .env:
       #   KALAM_ORION_ADMINS=http://kalam-1:8080/api/v1/admin,http://kalam-2:8080/api/v1/admin
-      # in .env, or run `docker compose --profile fleet run --rm loader` with it set.
       SOMA_ORION_ADMIN: ${SOMA_ORION_ADMIN:-http://soma:8080/api/v1/admin}
       KALAM_ORION_ADMINS: ${KALAM_ORION_ADMINS:-http://kalam-1:8080/api/v1/admin}
-      # 1 declares the vendored engine as a rules change, which is refused while a season is live (06 §5.3)
+      # 1 declares the vendored engine as a rules change, refused while a season is live.
       ENGINE_RELEASE: ${ENGINE_RELEASE:-0}
       LOADER_DB_URL: postgres://${POSTGRES_USER:-soma}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-soma}
       KALAM_DB_PASSWORD: ${KALAM_DB_PASSWORD:-kalam-dev-secret}
       JODI_DB_PASSWORD: ${JODI_DB_PASSWORD:-jodi-dev-secret}
-      # What load-package.sh in all three packages already reads, and what run.sh now sends too.
-      ORION_ADMIN_API_KEY: ${ORION_ADMIN_KEY:?run devops/scripts/admin-key.sh}
+      ORION_ADMIN_API_KEY: ${ORION_ADMIN_KEY:?run scripts/setup/admin-key.sh}
       KALAM_ENGINE_DIGEST: ${KALAM_ENGINE_DIGEST:-}
-      # soma
+      # Compose service names resolve to private addresses, which Orion's SSRF guard refuses unless
+      # the connector opts in; the committed packages do not ship with the guard disabled.
       SOMA_ALLOW_PRIVATE_DB: "1"
-      # jodi -- its admission clock reaches the admission axon through the `jodi-loader` connector.
       JODI_ALLOW_PRIVATE_DB: "1"
-      ADMISSION_LOADER_URL: http://axon-admission:9090
-      # kalam -- its wave reaches the replica axon through `model-loader`, and the store through
-      # `kalam-blobs-put`, whose base URL must be exactly the endpoint.
-      # MODEL_LOADER_URL is deliberately unset: axon is a sidecar in each replica's network
-      # namespace, so the connector's committed default -- http://127.0.0.1:9090 -- is already the
-      # right address on every replica, which is the deployed topology and not a local trick.
       KALAM_ALLOW_PRIVATE_URLS: "1"
-      R2_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
-      R2_BUCKET: ${R2_BUCKET:-tinybrains-replays}
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
-      R2_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
+      ADMISSION_LOADER_URL: http://axon-admission:9090
+      # MODEL_LOADER_URL is deliberately unset: axon is a sidecar in each replica's namespace, so
+      # the connector's committed default is already right on every replica.
     restart: "no"
 
-  # Orion's own operations console: live dashboards, a system map of the channels and connectors,
-  # workflow DAGs, and trace drill-downs. It reads the same admin API the loader writes to, so it
-  # is also the easiest way to see why a channel is quarantined. 1.6.0 is the newest console
-  # published and reads a 1.7.0 server fine.
-  #
-  # SECURITY: the admin API is unauthenticated by default, so anyone who can reach this console
-  # can create, edit and delete channels and workflows, and fire arbitrary requests at them. It
-  # is published on 127.0.0.1 only. Do not bind it to a routable address without admin_auth.
+  # Orion's operations console: dashboards, the channel/connector map, workflow DAGs, traces. It
+  # reads the same admin API the loader writes to. Published on 127.0.0.1 only -- anyone who can
+  # reach it can create, edit and delete channels and workflows.
   orion-ui:
     image: ghcr.io/goplasmatic/orion-ui:${ORION_UI_VERSION:-1.6.0}
     depends_on:
       soma:
         condition: service_healthy
     environment:
-      # The image's bundled nginx reverse-proxies every /api/ request here: the in-network
-      # address of the server, not a browser-reachable one. This is the soma+jodi cluster; a Kalam
-      # replica's admin plane is on 127.0.0.1:8082 (and :8083) directly.
+      # The in-network address, for the image's bundled nginx. A Kalam replica's admin plane is on
+      # 127.0.0.1:8082 (and :8083) directly.
       ORION_URL: http://soma:8080
-    # Container listens on 8080; 8081 on the host to stay clear of orion.
     ports:
       - "127.0.0.1:8081:8080"
     restart: unless-stopped
@@ -407,10 +322,9 @@ services:
     build:
       context: ../web
     volumes:
-      # The book, rendered, read-only. It is a separate repository and web/'s build
-      # context cannot reach it, so locally it is mounted and a deployment bakes it into
-      # the image at the same path. Run `mdbook build` in docs/ first; without it
-      # /docs answers 404 and nothing else on the site is affected.
+      # The book, rendered. A separate repository that web/'s build context cannot reach, so
+      # locally it is mounted and a deployment bakes it in at the same path. Run `mdbook build` in
+      # docs/ first; without it /docs answers 404 and nothing else is affected.
       - ../docs/book:/usr/share/nginx/html/docs:ro
     depends_on:
       soma:
@@ -420,100 +334,9 @@ services:
       - "127.0.0.1:5173:80"
     restart: unless-stopped
 
-  # --------------------------------------------------------------------------- the parts that are not Orion
-  #
-  # Axon: the Model Loader. One binary, two roles (axon/docs/design.md §8). These are the REPLICA role -- it
-  # fetches by hash, serves /play, and its fetch allowlist is empty whatever the environment says,
-  # so a compromised workflow cannot tell it where to pull bytes from. It is not an Orion package
-  # and has no channels: the wave reaches it over plain HTTP through the `model-loader` connector,
-  # at max_retries: 0, because a retried /play replays a turn.
-  #
-  # ONE PER REPLICA, AS A SIDECAR. `network_mode: service:kalam-N` puts this in the replica's
-  # network namespace, so the wave reaches it at 127.0.0.1:9090 -- which is what
-  # kalam/connectors/model-loader.json ships as its committed default, and what a deployment does
-  # with a sidecar container. Nothing substitutes a loader URL any more, and the package is byte
-  # for byte the same on every replica. The cost of the shared namespace is that this container
-  # publishes no ports of its own: kalam-N declares 9090 for it.
-  axon-1:
-    build:
-      context: ../axon
-    network_mode: "service:kalam-1"
-    depends_on:
-      - kalam-1
-    environment:
-      AXON_MODE: replica
-      AXON_BIND: 127.0.0.1:9090
-      # THE MODEL STORE, S3/SigV4 -- docs/deployment.md §8.1. It replaced the shared `axon-store` volume, and
-      # not as an optimisation: the admission instance and every replica must share ONE store, and
-      # across hosts there is no shared volume. Locally that is minio; in a deployment, R2.
-      AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
-      AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
-      AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
-      AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
-      AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
-      # LAYER 07 §7.1: this must exceed wave_k x seats x max_class_bytes, which is what decision 5
-      # actually bounds K by. At K=16, 2 seats and a 64 MiB `large` class that is 2 GiB. It is
-      # smaller here because the local stack holds a handful of Micro models and nothing large --
-      # raise it, or lower wave_k, before a real class mix arrives.
-      AXON_MEMORY_BUDGET_BYTES: ${AXON_MEMORY_BUDGET_BYTES:-1073741824}
-      AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
-    restart: unless-stopped
-
-  axon-2:
-    profiles: ["fleet"]
-    build:
-      context: ../axon
-    network_mode: "service:kalam-2"
-    depends_on:
-      - kalam-2
-    environment:
-      AXON_MODE: replica
-      AXON_BIND: 127.0.0.1:9090
-      # THE MODEL STORE, S3/SigV4 -- docs/deployment.md §8.1. It replaced the shared `axon-store` volume, and
-      # not as an optimisation: the admission instance and every replica must share ONE store, and
-      # across hosts there is no shared volume. Locally that is minio; in a deployment, R2.
-      AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
-      AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
-      AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
-      AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
-      AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
-      AXON_MEMORY_BUDGET_BYTES: ${AXON_MEMORY_BUDGET_BYTES:-1073741824}
-      AXON_IDLE_TTL_S: ${AXON_IDLE_TTL_S:-900}
-    restart: unless-stopped
-
-  # The SECOND role of the same binary: admission (axon/docs/design.md §8, jodi/docs/admission.md). It differs from the
-  # replica in four ways and no others -- it accepts URLs and fetches from allowlisted hosts, it
-  # mirrors what it verified into the store inside the /load call, it serves /inspect and
-  # /validate, and it refuses /play with a 404 so a confusion of roles is loud. It mounts the SAME
-  # store as the replica: see the note at the top of the file.
-  axon-admission:
-    build:
-      context: ../axon
-    environment:
-      AXON_MODE: admission
-      AXON_BIND: 0.0.0.0:9090
-      # The SAME bucket every replica reads. This instance is the only writer.
-      AXON_STORE_S3_ENDPOINT: ${R2_ENDPOINT:-http://minio:9000}
-      AXON_STORE_S3_BUCKET: ${AXON_STORE_BUCKET:-tinybrains-models}
-      AXON_STORE_S3_REGION: ${R2_REGION:-us-east-1}
-      AXON_STORE_S3_ACCESS_KEY: ${R2_ACCESS_KEY:-tinybrains}
-      AXON_STORE_S3_SECRET_KEY: ${R2_SECRET_KEY:-tinybrains-dev-secret}
-      # Only this instance may reach the public internet, and only these two hosts. A release
-      # download URL on github.com redirects to objects.githubusercontent.com, so both are needed.
-      AXON_FETCH_ALLOW_HOSTS: ${AXON_FETCH_ALLOW_HOSTS:-github.com,objects.githubusercontent.com}
-      # Bigger than the replica's: admission holds up to admit_batch models at once, and a Large
-      # entry is 64 MiB compressed. A refusal here is a loader fault and a wasted attempt.
-      AXON_MEMORY_BUDGET_BYTES: ${AXON_ADMISSION_MEMORY_BYTES:-2147483648}
-      # Nothing plays here, so a model need not linger; the clock unloads explicitly anyway.
-      AXON_IDLE_TTL_S: ${AXON_ADMISSION_IDLE_TTL_S:-120}
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:9091:9090"
-
-  # MinIO: the replay object store, S3-compatible, so the presigned PUT the wave does at every
-  # finish is exercised against a real implementation rather than a placeholder. Not decoration --
-  # a `finished` row REQUIRES replay_key, so a wave that cannot write a blob cannot finish a match.
-  # The bucket is made by the loader.
+  # The replay object store, so the presigned PUT the wave does at every finish runs against a real
+  # S3 implementation. A `finished` row requires replay_key, so a wave that cannot write a blob
+  # cannot finish a match. The buckets are made by the loader.
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"

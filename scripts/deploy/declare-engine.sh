@@ -1,55 +1,35 @@
 #!/usr/bin/env sh
-# STEP 6 OF THE DEPLOY -- the engine cutover. docs/deployment.md §9, decision 44.
+# THE ENGINE CUTOVER -- deploy step 6, and the switch the other six steps lead up to.
 #
-#   devops/scripts/declare-engine.sh [--release] [sha256:DIGEST]
+#   scripts/deploy/declare-engine.sh [--release] [sha256:DIGEST]
 #
 # Runs in the loader image, which is where the deploy's other database steps run:
 #
-#   docker compose run --rm --no-deps --entrypoint /pkg/devops/scripts/declare-engine.sh loader
+#   docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
 #
-# The deploy's other six steps are safe against the fleet as it stands when they run. This one is
-# THE SWITCH: before it the new replicas are idle and the old fleet is playing; after it pair
-# stamps the new digest, the new replicas claim, and the old ones can claim nothing and drain what
-# they hold. It is one statement, and it runs LAST -- once the new replicas exist and are loaded.
+# Before it the new replicas are idle and the old fleet is playing; after it pair stamps the new
+# digest, the new replicas claim, and the old ones drain what they hold. It runs LAST, once the new
+# replicas exist and are loaded.
 #
-# WHY THIS IS NOT `loader setup`. The local loader declares the engine on every `docker compose up`
-# and derives it from the vendored component, which is right for one server and wrong for a rolling
-# deploy in two ways:
+# WHY NOT `loader setup`. The local loader declares the engine on every `up`, and is wrong for a
+# rolling deploy in two ways: it re-stamps the live season's `pending` rows onto the new digest
+# (a kindness to a dev stack -- the pairing was chosen for the old engine and the ratings have moved
+# since), and it asserts nothing about the fleet. Declaring a digest no replica carries gives the
+# ladder a queue nobody can claim, and NOTHING ERRORS.
 #
-#   * it re-stamps the live season's `pending` rows onto the new digest. That is a kindness to a
-#     dev stack and WRONG in a deployment: the pairing was chosen for the old engine and the
-#     ratings have moved since. Let withdraw cancel those rows as ENGINE_RETIRED and pair re-insert
-#     on the new digest -- a fresh insert is a fresh pairing, and it costs one withdraw period.
-#   * it asserts nothing about the fleet. Declaring a digest no replica carries gives the ladder a
-#     queue nobody can claim, and NOTHING ERRORS: pair keeps inserting, the rows sit `pending`, and
-#     every replica stays healthy and idle. That is the failure this script's preflight exists to
-#     prevent, and it is the same shape as docs/deployment.md §8.2's invisible capacity.
-#
-# THE PREFLIGHT. Orion 1.7.0's /health reports each loaded plugin's DIGEST, not merely its name:
-#
-#   .plugins.loaded[] | {plugin, version, digest}
-#
-# so "the new replicas exist and are loaded" is checkable rather than assumed. At least one replica
-# must carry the digest being declared -- otherwise the declaration is the silent stall above. The
-# others may carry the old one; that is what a roll looks like mid-flight, and this script names
-# them as the fleet that will drain.
+# THE PREFLIGHT. /health reports each loaded plugin's digest, so "the new replicas are loaded" is
+# checkable rather than assumed: at least one replica must carry the digest being declared. Others
+# may carry the old one -- that is what a roll looks like mid-flight, and they are named as the
+# fleet that will drain.
 #
 # WHAT IT NEEDS
 #   LOADER_DB_URL        the match database, as its owner
-#   KALAM_ORION_ADMINS   comma-separated, one admin URL per replica -- each has its own state
-#                        database and there is no epoch bus between them (decision 41)
+#   KALAM_ORION_ADMINS   comma-separated, one admin URL per replica
 #   GAME                 defaults to ants
 #
-# DIGEST defaults to the hash of the vendored component, derived and never typed, for the same
-# reason the loader derives it: a literal that disagrees with the file is the one failure that is
-# silent everywhere.
-#
-# --release marks a RULES CHANGE rather than a patch. 06 §5.3 refuses one while a season is live --
-# its rows all name the old digest and the season would stall in silence -- so this exits non-zero
-# and tells the operator to close the season or roll back.
-#
-# Exit 0 means the column, the live season and the roster epoch agree with the digest, and at least
-# one replica can claim what pair stamps next.
+# DIGEST defaults to the hash of the vendored component: a literal that disagrees with the file is
+# the one failure that is silent everywhere. --release marks a RULES CHANGE, which is refused while
+# a season is live because its rows all name the old digest and it would stall in silence.
 set -eu
 
 RELEASE=0
@@ -57,17 +37,16 @@ DIGEST=""
 for a in "$@"; do
   case "$a" in
     --release) RELEASE=1 ;;
-    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     sha256:*)  DIGEST="$a" ;;
     *) echo "unknown argument: $a (want --release, or a sha256:... digest)" >&2; exit 2 ;;
   esac
 done
 
 DB="${LOADER_DB_URL:?LOADER_DB_URL is required -- the match database, as its owner}"
-# The preflight reads /health's plugin digests, and that detail is admin-only when admin_auth is
-# enabled: `show_detail = !admin_auth.enabled || a valid key`. Without the credential /health still
-# answers 200, omits `plugins`, and the preflight below concludes the fleet carries no engine --
-# refusing a cutover that was fine. Unset is still allowed, for a server with admin_auth off.
+# /health's plugin detail is admin-only when admin_auth is enabled. Without the credential it still
+# answers 200, omits `plugins`, and the preflight below would conclude the fleet carries no engine
+# and refuse a cutover that was fine. Unset is still allowed, for a server with admin_auth off.
 ADMIN_AUTH=""
 [ -n "${ORION_ADMIN_API_KEY:-}" ] && ADMIN_AUTH="Authorization: Bearer ${ORION_ADMIN_API_KEY}"
 hcurl() { if [ -n "$ADMIN_AUTH" ]; then curl -H "$ADMIN_AUTH" "$@"; else curl "$@"; fi; }
@@ -146,7 +125,7 @@ if [ "$RELEASE" = 1 ]; then
   live=$(val "SELECT count(*) FROM seasons s JOIN games g ON g.id = s.game_id AND g.slug = '$GAME' WHERE s.closed_at IS NULL")
   if [ "${live:-0}" -ne 0 ]; then
     echo >&2
-    echo "REFUSED: --release is a rules change and a season is live (06 §5.3)." >&2
+    echo "REFUSED: --release is a rules change and a season is live." >&2
     echo "Its rows all name the old digest, so the new replicas would claim nothing and the season" >&2
     echo "would stall in silence. Close the season first --" >&2
     echo "POST /v1/games/$GAME/seasons/current/close -- or roll the engine back." >&2
@@ -164,20 +143,13 @@ psql -X "$DB" -At -c "
 SELECT '    ' || count(*) || ' in flight on ' || left(engine_digest, 19) || '...'
   FROM matches WHERE status IN ('claimed', 'running') GROUP BY engine_digest"
 
-# ---------------------------------------------------------------- THE SWITCH -- docs/deployment.md §9
+# THE SWITCH. Three writes in one transaction, deliberately NOT chained through one another so a
+# re-run repairs whichever half lagged: the column pair stamps new rows from, the live season's
+# pinned copy (a patch is behaviour-preserving, so it keeps its ratings), and the roster epoch, so
+# a pair run already mid-plan halts at its fence and re-reads.
 #
-# Three writes, one transaction, and deliberately NOT chained through one another so a re-run
-# repairs whichever half lagged:
-#
-#   games.active_engine_digest   what the deploy declares; pair reads it to stamp new rows
-#   seasons.engine_digest        the live season's pinned copy, which is what a row actually
-#                                carries (06 §4.4). A PATCH is behaviour-preserving, so the live
-#                                season takes it and keeps its ratings
-#   clocks.roster                bumped, so a pair run already mid-plan halts at its fence and
-#                                re-reads rather than inserting against the engine it started under
-#
-# `pending` rows are NOT re-stamped. That is the one thing this does differently from the local
-# loader, and it is the whole difference between a dev convenience and a deploy.
+# `pending` rows are NOT re-stamped -- the one thing this does differently from the local loader,
+# and the whole difference between a dev convenience and a deploy.
 echo "==> declaring"
 psql_db -v d="$DIGEST" -v g="$GAME" <<'SQL'
 BEGIN;
@@ -196,7 +168,6 @@ UPDATE clocks c SET epoch = c.epoch + 1, updated_at = now()
 COMMIT;
 SQL
 
-# ---------------------------------------------------------------- what happens next, said plainly
 echo "==> declared"
 psql -X "$DB" -At -c "
 SELECT '    game:   ' || left(active_engine_digest, 19) || '...' FROM games WHERE slug = '$GAME'"

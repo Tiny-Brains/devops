@@ -1,32 +1,26 @@
 #!/usr/bin/env bash
-# Assert what the config split put in two places -- docs/deployment.md §3.
+# Assert what the config split put in two places.
 #
-# Until docs/deployment.md there was one orion.toml.tmpl and one [vars] block, so a value two packages had to
-# agree on agreed by being written once. There are now two templates, and three values live in both
-# or are derived across the boundary. Each one fails SILENTLY when it disagrees:
+#   scripts/check/configs.sh
 #
-#   forfeit_strikes == strike_ceiling   count would judge a trial by a rule the wave did not play
-#                                       by -- a seat forfeits at 5 strikes and count expects 3, and
-#                                       nothing anywhere says so
-#   prior_mu / prior_sigma              two priors on one ladder. SAFE TODAY, because both readers
-#                                       are in soma.toml.tmpl -- the check is here for the day Soma
-#                                       gets a server of its own, which is the split this whole
-#                                       topology exists to make cheap (docs/deployment.md §16.4)
-#   engine_digest is DERIVED            a literal digest in kalam.toml.tmpl is the one failure that
-#                                       is silent everywhere: the wave claims nothing, for ever,
-#                                       and the replica looks healthy doing it
+# There are two instance templates and three values that live in both or are derived across the
+# boundary. Each fails SILENTLY when it disagrees:
+#
+#   forfeit_strikes == strike_ceiling   count would judge a trial by a rule the wave did not play by
+#   prior_mu / prior_sigma              two priors on one ladder
+#   engine_digest is DERIVED            a literal is the one failure that is silent everywhere --
+#                                       the wave claims nothing, for ever, and the replica looks
+#                                       healthy doing it
 #
 # It also parses both templates through orion-server, so a config that would refuse to boot fails
 # here instead of at 3am. That half needs the orion image; without docker it is skipped and said so.
 #
-#   devops/scripts/check-configs.sh
-#
-# Exit 0 means both templates are consistent and parse. Run it before shipping a config change.
+# Exit 0 means both templates are consistent and parse.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-SOMA=orion/soma.toml.tmpl
-KALAM=orion/kalam.toml.tmpl
+SOMA=compose/orion/soma.toml.tmpl
+KALAM=compose/orion/kalam.toml.tmpl
 fail=0
 
 ok()   { printf '  ok    %s\n' "$1"; }
@@ -37,9 +31,8 @@ for f in "$SOMA" "$KALAM"; do
   [ -r "$f" ] || { echo "missing $f" >&2; exit 1; }
 done
 
-# A [vars] scalar, as written. Deliberately not a TOML parse: these files are templates with
-# ${NAME:-default} substitutions in them, which no TOML reader will accept until orion-server has
-# expanded them. Matching the literal is what a reader does, and what a reviewer checks.
+# A [vars] scalar, as written. Not a TOML parse: these are templates with ${NAME:-default} in them,
+# which no TOML reader accepts until orion-server has expanded them.
 var() {  # $1 file, $2 key
   sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\(.*\)$/\1/p" "$1" \
     | head -1 | sed 's/[[:space:]]*#.*$//' | sed 's/[[:space:]]*$//'
@@ -59,9 +52,8 @@ else
 fi
 
 # ---- 2. the rating prior -----------------------------------------------------
-# Both readers are in soma.toml.tmpl today, so this asserts the pair is present and internally
-# consistent, and compares against kalam.toml.tmpl only if it ever grows a copy. Written now so
-# that the day it matters the check already exists rather than being remembered.
+# Both readers are in soma.toml.tmpl today; this compares against kalam.toml.tmpl only if it ever
+# grows a copy, so the day it matters the check already exists.
 for k in prior_mu prior_sigma; do
   a=$(var "$SOMA" "$k"); b=$(var "$KALAM" "$k")
   if [ -z "$a" ]; then
@@ -75,8 +67,8 @@ for k in prior_mu prior_sigma; do
   fi
 done
 
-# The seed gives the baselines their prior, and a baseline's first fold reads [vars] as its own.
-seed=db-init/30-seed.sql
+# A baseline's first fold reads [vars] as its own prior, so the seed must carry the same number.
+seed=compose/db-init/30-seed.sql
 if [ -r "$seed" ]; then
   mu=$(var "$SOMA" prior_mu)
   if grep -q "$mu" "$seed"; then
@@ -98,9 +90,9 @@ case "$ed" in
 esac
 
 # ---- 4. neither unit is left unchecked ---------------------------------------
-# `[plugins.trust] public_keys` empty is not an error anywhere: the node loads whatever it is sent
-# and says nothing. A trust posture that is on for one unit and off for the other is worse than one
-# that is off for both, because the unchecked node is the one nobody remembers. docs/deployment.md §11.
+# An empty `public_keys` is not an error anywhere: the node loads whatever it is sent and says
+# nothing. A posture that is on for one unit and off for the other is worse than off for both,
+# because the unchecked node is the one nobody remembers.
 for f in "$SOMA" "$KALAM"; do
   keys=$(grep -A1 '^\[plugins\.trust\]' "$f" | grep '^public_keys' | cut -d= -f2- | tr -d ' ')
   case "$keys" in
@@ -114,9 +106,7 @@ for f in "$SOMA" "$KALAM"; do
 done
 
 # ---- 5. the admin plane is not open -------------------------------------------
-# `admin_auth.enabled = false` is the same shape of silence as an empty trust list: the plane
-# answers everyone and nothing says so. docs/deployment.md §11 gates it on "before anything is reachable off
-# loopback", which is a date nobody notices passing.
+# The same shape of silence as an empty trust list: the plane answers everyone and nothing says so.
 for f in "$SOMA" "$KALAM"; do
   if ! grep -q '^\[admin_auth\]' "$f"; then
     bad "$f has no [admin_auth] block -- its admin plane installs anything anyone asks it to"
@@ -129,8 +119,8 @@ done
 
 echo "==> the split itself"
 
-# Kalam must not be in cluster mode (decision 41): a shared `forbid` row makes the wave a
-# fleet-wide singleton and N-1 replicas idle while looking healthy.
+# A shared `forbid` row makes the wave a fleet-wide singleton, so N-1 replicas idle while looking
+# healthy (decision 41).
 if grep -q '^\[cluster\]' "$KALAM"; then
   bad "$KALAM has a [cluster] block -- decision 41: a replica must be its own scheduler, or exactly one replica ever plays"
 else
@@ -151,9 +141,8 @@ else
   bad "$SOMA must set auto_migrate = false -- cluster.enabled with auto_migrate is refused at startup"
 fi
 
-# docs/deployment.md §6.1: the OUTER bound on a draining wave is shutdown_force_timeout_secs, not the cron
-# key, because the cron worker is a supervised task. A force below the cron timeout silently caps
-# the drain -- which is exactly the 30 s the build measured and mis-explained.
+# The OUTER bound on a draining wave is shutdown_force_timeout_secs, not the cron key, because the
+# cron worker is a supervised task. A force below the cron timeout silently caps the drain.
 kf=$(var "$KALAM" shutdown_force_timeout_secs); kf=${kf##*:-}; kf=${kf%\}}
 kc=$(var "$KALAM" shutdown_timeout_secs);       kc=${kc##*:-}; kc=${kc%\}}
 if [ -n "$kf" ] && [ -n "$kc" ] && [ "$kf" -ge "$kc" ] 2>/dev/null; then
@@ -182,16 +171,10 @@ else
   skip "orion-server parse (no docker, or the image is not built yet: docker compose build soma)"
 fi
 
-# ---------------------------------------------------------------- the vendored engine
-#
-# Kalam vendors the cartridge rather than building it, so two committed copies of one component
-# exist and they can drift. When they do, NOTHING ERRORS: the loader uploads kalam's copy and
-# declares its digest, the replicas claim rows naming it, and the ladder plays a component that is
-# not the one the cartridge repository ships -- with a viewer built against the other one.
-#
-# It has already happened once, from an edit that changed no behaviour at all: a doc comment in
-# ants shifted the line numbers Rust bakes into panic locations, the rebuild produced a different
-# digest, and the vendored copy was a build behind.
+# Kalam vendors the cartridge rather than building it, so two committed copies exist and can drift.
+# When they do NOTHING ERRORS: the ladder plays a component that is not the one ants ships, with a
+# viewer built against the other. It has happened once already, from an edit that changed no
+# behaviour -- a doc comment shifted the line numbers Rust bakes into panic locations.
 ANTS="${ANTS_DIR:-../ants}"
 VENDORED="../kalam/plugins/tb-ants/tb-ants.wasm"
 if [ -r "$ANTS/tb-ants.wasm" ] && [ -r "$VENDORED" ]; then
@@ -204,7 +187,7 @@ if [ -r "$ANTS/tb-ants.wasm" ] && [ -r "$VENDORED" ]; then
     bad "kalam's vendored engine is not the one ants ships
        ants     sha256:$a
        kalam    sha256:$b
-     run kalam/scripts/vendor-engine.sh, then devops/scripts/sign-plugins.sh"
+     run kalam/scripts/vendor-engine.sh, then scripts/setup/sign-plugins.sh"
   fi
 else
   skip "vendored engine (no ants checkout beside this one, or it has not been built)"

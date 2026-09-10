@@ -1,10 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# THE ONE ORION. Upstream orion-server, fetched and verified, with nothing baked in: no package,
-# no config. Soma, Jodi and Kalam are JSON definitions that the `loader` service installs over the
-# admin API once this is answering, and the instance config is mounted from ./orion.toml.tmpl. So
-# the image is the same in every environment, and rebuilding it means an Orion upgrade and nothing
-# else -- a package edit is a `docker compose run --rm loader`, not a build.
+# Upstream orion-server, fetched and verified, with nothing baked in: no package, no config. The
+# image is the same in every environment, so rebuilding it means an Orion upgrade and nothing else
+# -- a package edit is `docker compose run --rm loader`, not a build.
 
 # ---- fetch and verify the orion-server binary --------------------------------
 FROM debian:bookworm-slim AS orion
@@ -41,9 +39,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin orion \
- # A Kalam replica keeps its Orion state in a SQLite file here (kalam.toml.tmpl). No volume is
- # mounted over it on purpose: the state holds the loaded package and nothing else, so losing it
- # on a restart costs one package load. Unused by the soma role, which is on Postgres.
+ # A Kalam replica's SQLite state. No volume is mounted over it on purpose: it holds the loaded
+ # package and nothing else. Unused by the soma role, which is on Postgres.
  && install -d -o orion -g orion /var/lib/orion
 
 COPY --from=orion /usr/local/bin/orion-server /usr/local/bin/orion-server
@@ -53,9 +50,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 USER orion
 EXPOSE 8080
 
-# /readyz is 200 only once startup has finished, the state database answers and no required
-# background task has died. A channel that failed to load does not fail this -- the loader prints
-# those from /health.
+# 200 once startup has finished, the state database answers and no required background task has
+# died. A channel that failed to load does NOT fail this -- the loader checks /health for those.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
   CMD curl -fsS http://127.0.0.1:8080/readyz > /dev/null || exit 1
 

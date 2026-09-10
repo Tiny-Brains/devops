@@ -62,11 +62,11 @@ Kalam's wave singleton local to each replica. All Axons use one model bucket; re
 |---|---|---|---|
 | db | None | postgres:16-alpine | Platform database and Orion cluster-state database |
 | redis | None | redis:7-alpine | Shared Orion cluster backend |
-| soma | 8080 | orion/, ORION_VERSION | Soma routes and Jodi clocks in cluster mode |
-| kalam-1 | 8082 | orion/, ORION_VERSION | Independent match-wave scheduler |
+| soma | 8080 | compose/orion/, ORION_VERSION | Soma routes and Jodi clocks in cluster mode |
+| kalam-1 | 8082 | compose/orion/, ORION_VERSION | Independent match-wave scheduler |
 | axon-1 | None | Axon repository | Replica loader in kalam-1's network namespace |
 | axon-admission | 9091 | Axon repository | Submission verification and model mirroring |
-| loader | None; one-shot | loader/ | Registration, package installation, and checks |
+| loader | None; one-shot | compose/loader/ | Registration, package installation, and checks |
 | web | 5173 | Web repository | nginx serving the SPA and /v1 proxy |
 | orion-ui | 8081 | ghcr.io/goplasmatic/orion-ui, ORION_UI_VERSION | Operations console |
 | minio | 9000, 9001 | Pinned minio/minio release in Compose | S3 endpoint and storage console |
@@ -115,20 +115,20 @@ docker compose up --build -d
 Check configuration consistency and inspect startup results:
 
 ```sh
-./scripts/check-configs.sh
+./scripts/check/configs.sh
 docker compose ps -a
 docker compose logs loader
 ```
 
 There is no aggregate test suite. Inspect the loader exit status and plugin/quarantine output.
-check-configs.sh checks priors, strikes, engine identity, topology, and drain defaults; it skips
+check/configs.sh checks priors, strikes, engine identity, topology, and drain defaults; it skips
 Orion parsing without a local image, so exit zero alone does not prove both templates were parsed.
 
 Reload edited packages with `docker compose run --rm loader`. For two replicas, set
 KALAM_ORION_ADMINS to both admin URLs listed in .env.example before running
 `docker compose --profile fleet up --build -d`, then rerun the loader if either replica was recreated.
-`scripts/seed-baselines.sh` populates development model fixtures; initial SQL hashes alone are not
-runnable assets. `scripts/resync-dev-schema.sh` is a guarded pre-release development repair, not a
+`scripts/dev/seed-baselines.sh` populates development model fixtures; initial SQL hashes alone are not
+runnable assets. `scripts/dev/resync-dev-schema.sh` is a guarded pre-release development repair, not a
 production migration tool, and refuses populated ladder data.
 
 ## What a deployment owes it
@@ -162,23 +162,39 @@ is a development convenience, not that rollout protocol.
 ## Layout
 
 ```text
-cli/                   the `tinybrains` binary: run a match on a laptop, any game
-games/registry.toml    which games exist, and where their artifacts come from
-docker-compose.yml     services, networks, mounts, profiles, and volumes
-.env.example           configuration contract without private credentials
-orion/Dockerfile        checksum-verified upstream Orion image
-orion/entrypoint.sh     instance startup and derived engine identity
-orion/soma.toml.tmpl    clustered Soma/Jodi runtime and policy
-orion/kalam.toml.tmpl   independent wave runtime and policy
-loader/Dockerfile       package-loader image
-loader/run.sh           registration, package loading, and health checks
-db-init/                fresh-volume database initialization and seed
-scripts/check-configs.sh shared configuration assertions and optional parser checks
-scripts/trust-keygen.sh  mints the Ed25519 plugin trust root for this machine
-scripts/sign-plugins.sh  signs every plugin component with it
-scripts/declare-engine.sh the engine cutover: deploy step 6, with its fleet preflight
-scripts/seed-baselines.sh development model-store fixtures
-scripts/resync-dev-schema.sh guarded development schema repair
+docker-compose.yml            services, networks, mounts, profiles, and volumes
+.env.example                  configuration contract without private credentials
+
+compose/                      everything the Compose file builds or mounts
+  orion/Dockerfile            checksum-verified upstream Orion image
+  orion/entrypoint.sh         instance startup and derived engine identity
+  orion/soma.toml.tmpl        clustered Soma/Jodi runtime and policy
+  orion/kalam.toml.tmpl       independent wave runtime and policy
+  loader/Dockerfile           package-loader image
+  loader/run.sh               registration, package loading, and health checks
+  db-init/                    fresh-volume database initialization and seed
+
+scripts/                      grouped by what they do to a stack
+  setup/admin-key.sh          mints the Orion admin credential into .env
+  setup/trust-keygen.sh       mints the Ed25519 plugin trust root for this machine
+  setup/sign-plugins.sh       signs every plugin component with it
+  deploy/declare-engine.sh    the engine cutover, with its fleet preflight
+  dev/seed-baselines.sh       development model-store fixtures
+  dev/resync-dev-schema.sh    guarded development schema repair
+  check/configs.sh            cross-template assertions and the Orion parse check
+  check/claim-load.sh         what a claim costs under N concurrent pollers
+  check/autoscale.sh          drives the autoscaler query against staged ladders
+
+cli/                          the `tinybrains` binary: run a match on a laptop, any game
+games/registry.toml           which games exist, and where their artifacts come from
+docs/                         architecture, decisions, deployment, Orion notes
+```
+
+`scripts/deploy/` is mounted into the loader container at `/deploy`, so a deploy step runs where
+the database and the admin API are both reachable:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
 ```
 
 ### The local loop
@@ -243,12 +259,12 @@ signature over its component digest — the ASCII `sha256:<64 hex>`, not the byt
 upload arrives and again by every node that loads it. A fresh checkout mints its own root:
 
 ```
-./scripts/trust-keygen.sh     writes keys/ (ignored) and TB_TRUST_PUBLIC_KEY into .env
-./scripts/sign-plugins.sh     writes <component>.sig beside each plugin
+./scripts/setup/trust-keygen.sh   writes keys/ (ignored) and TB_TRUST_PUBLIC_KEY into .env
+./scripts/setup/sign-plugins.sh   writes <component>.sig beside each plugin
 docker compose run --rm loader load
 ```
 
-Re-run `sign-plugins.sh` after any plugin rebuild or `kalam/scripts/vendor-engine.sh`. A stale or
+Re-run `setup/sign-plugins.sh` after any plugin rebuild or `kalam/scripts/vendor-engine.sh`. A stale or
 missing signature is not silent: the node reports `degraded`, names the plugin and the digest under
 `plugins.failed_to_load` with `stage: "signature"`, and quarantines the channels whose workflows
 needed it. The private half never lives here — a deployment signs with its own key from its
@@ -259,7 +275,7 @@ orchestrator's secret store and sets only the public half.
 - **The CLI knows no game.** `cli/` never links an engine crate and never names a cartridge's types; a second game is a registry entry. If that stops being true the seam has quietly moved.
 - **A local result and a ladder result are the same match.** `tinybrains conform` is the check, and `cli/src/wave.rs` is the only place a copy of Kalam's loop is allowed to live.
 
-- **Jodi shares scheduler state; Kalam replicas do not.** check-configs.sh checks the cluster split so a fleet does not accidentally share one wave lock.
+- **Jodi shares scheduler state; Kalam replicas do not.** `check/configs.sh` checks the cluster split so a fleet does not accidentally share one wave lock.
 - **Admission and play use the same model store.** Compose wires the same bucket into both roles; review must preserve that equality.
 - **Engine identity comes from the deployed bytes.** Entrypoint and loader derivation prevent an apparently healthy replica from claiming no compatible work.
 - **Disposable Orion state requires package initialization.** The loader checks the required plugin and rejects quarantined channels, but does not yet explicitly assert tb-wave presence.
@@ -268,14 +284,14 @@ orchestrator's secret store and sets only the public half.
 
 ## Status
 
-**8 September 2026.** Compose defines the API/clock split, sidecars, shared storage, and second replica. `scripts/check-configs.sh` passes consistency checks
+**10 September 2026.** Compose defines the API/clock split, sidecars, shared storage, and second replica. `scripts/check/configs.sh` passes consistency checks
 and parses both templates with the pinned Orion image. A fresh full-stack startup,
 live OAuth, real R2, mixed-engine rollout, cloud deployment, autoscaling, TLS, admin authentication,
 and plugin trust enforcement are not verified by that result; the production deployment work remains open.
 
 ## More
 
-- Local references: [Compose topology](docker-compose.yml), [environment contract](.env.example), and [runtime templates](orion/).
+- Local references: [Compose topology](docker-compose.yml), [environment contract](.env.example), and [runtime templates](compose/orion/).
 - Design docs: [`docs/architecture.md`](docs/architecture.md) (the whole-system map), [`docs/decisions.md`](docs/decisions.md), [`docs/deployment.md`](docs/deployment.md), [`docs/orion-notes.md`](docs/orion-notes.md).
 - [The competitor guide](https://github.com/Tiny-Brains/docs) — the reader-facing half: the rules, the model format, the adapter dialect, submitting, ranking and seasons. The platform section is the high-level design for someone new to the codebase.
 - Application repositories: [Soma](https://github.com/Tiny-Brains/soma), [Jodi](https://github.com/Tiny-Brains/jodi), [Kalam](https://github.com/Tiny-Brains/kalam), [Axon](https://github.com/Tiny-Brains/axon), [Ants](https://github.com/Tiny-Brains/ants), [Web](https://github.com/Tiny-Brains/web).
