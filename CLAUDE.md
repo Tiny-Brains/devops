@@ -10,9 +10,10 @@ binary). Soma, Jodi and Kalam are separate repos that each ship a self-contained
 know nothing about the topology — **this repo decides how many servers there are and which package
 goes in which.**
 
-It is one of nine repos checked out side by side under `tinybrains/`; see `../CLAUDE.md` for the
-platform-wide map. Compose uses sibling build contexts and read-only mounts, so a devops-only clone
-cannot build the stack.
+It is one of ten repos checked out side by side under `tinybrains/`; see `../CLAUDE.md` for the
+platform-wide map. Compose still reaches siblings for the packages it mounts, but every path is now
+a variable (`SOMA_DIR`, `JODI_DIR`, `KALAM_DIR`, `AXON_DIR`) rather than a hard-coded `../`, and the
+cartridge no longer comes from a checkout at all — see the `ants-artifacts` note below.
 
 `docs/architecture.md` is the system map, `docs/deployment.md` the topology and deploy order,
 `docs/decisions.md` the numbered decisions referenced throughout, `docs/orion-notes.md` the Orion
@@ -83,6 +84,16 @@ its own Orion, single instance, local SQLite, **no `[cluster]` block** (decision
 replicas over one shared state and the `wave` singleton becomes fleet-wide, so exactly one replica
 ever plays while the other N-1 poll a held row looking perfectly healthy. Kalam's fence is the
 leased claim on `matches`, not Orion's, so nothing is lost.
+
+**The cartridge's artifacts come from an image, not a checkout.** `ants` stopped committing its
+build output on 10 September 2026; it ships an artifact image carrying the component, its manifests,
+the board catalogue, the reference observations and the viewer under `/artifacts/`. The
+`ants-artifacts` one-shot copies that into the `ants-pkg` volume, and the loader mounts the volume
+where it used to mount `../ants` — so `games.reference_observations` is now the engine's own set
+rather than axon's single worst-case fixture standing in for it. `ANTS_REF` selects what runs:
+unset, it builds `tinybrains/ants:dev` from `ANTS_DIR`; set to a published tag it pins the engine
+digest as a deployment decision and needs no ants checkout at all. Kalam still loads its own
+vendored copy — that conversion has not landed yet, so two copies of the component still exist.
 
 **The engine digest agrees in three places by derivation, never by typing.** `compose/orion/
 entrypoint.sh` derives `KALAM_ENGINE_DIGEST` from `../kalam/plugins/tb-ants/tb-ants.wasm`;

@@ -248,6 +248,28 @@ services:
     ports:
       - "127.0.0.1:9091:9090"
 
+  # One-shot: puts the cartridge's build output where everything else reads it.
+  #
+  # THIS REPLACES A SIBLING CHECKOUT. ants/ used to commit tb-ants.wasm and the manifests beside it,
+  # and every consumer read them out of ../ants -- which made "all ten repositories cloned into one
+  # directory" the only layout this file works in. The artifacts now come from the image that
+  # builds them, so the coordinate is a tag rather than a path:
+  #
+  #   ANTS_REF=tinybrains/ants:dev            built here from ANTS_DIR (the default)
+  #   ANTS_REF=ghcr.io/tiny-brains/ants:v1    pulled, pinned, no checkout at all
+  #
+  # THE DIGEST FOLLOWS THE IMAGE. Whatever this produces is what kalam loads, what pair stamps on
+  # every row, and what the viewer re-simulates with -- so a rebuild that changes the component is
+  # a rules change, and `ENGINE_RELEASE=1` is the gate that refuses one while a season is live.
+  ants-artifacts:
+    build:
+      context: ${ANTS_DIR:-../ants}
+    image: ${ANTS_REF:-tinybrains/ants:dev}
+    # The image's own CMD copies /artifacts into /out and exits; everything that needs the
+    # cartridge waits on that exit rather than on a health check.
+    volumes:
+      - ants-pkg:/out
+
   # One-shot: declares the deployment facts, makes the buckets, and installs each package into the
   # server that runs it. soma and jodi go to SOMA_ORION_ADMIN and one call reaches every node of
   # that cluster; kalam goes to each entry of KALAM_ORION_ADMINS in turn, because each replica has
@@ -256,6 +278,8 @@ services:
     build:
       context: ./compose/loader
     depends_on:
+      ants-artifacts:
+        condition: service_completed_successfully
       soma:
         condition: service_healthy
       kalam-1:
@@ -269,13 +293,14 @@ services:
       minio:
         condition: service_healthy
     volumes:
-      - ../soma:/pkg/soma:ro
-      - ../jodi:/pkg/jodi:ro
-      - ../kalam:/pkg/kalam:ro
-      # For reference/observations.json once ants publishes one; until then axon's worst-case
-      # fixture stands in.
-      - ../ants:/pkg/ants:ro
-      - ../axon/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
+      - ${SOMA_DIR:-../soma}:/pkg/soma:ro
+      - ${JODI_DIR:-../jodi}:/pkg/jodi:ro
+      - ${KALAM_DIR:-../kalam}:/pkg/kalam:ro
+      # The cartridge's build output, from the volume `ants-artifacts` populates -- NOT from a
+      # sibling checkout. That is what carries reference/observations.json, so the reference set is
+      # now the engine's own rather than axon's one worst-case fixture standing in for it.
+      - ants-pkg:/pkg/ants:ro
+      - ${AXON_DIR:-../axon}/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
       # The deploy steps that are not `loader` itself, mounted rather than baked in:
       #   docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
       - ./scripts/deploy:/deploy:ro
@@ -359,3 +384,5 @@ services:
 volumes:
   db-data:
   blob-data:
+  # The cartridge's build output. Populated by `ants-artifacts` on every `up`, never by a checkout.
+  ants-pkg:
