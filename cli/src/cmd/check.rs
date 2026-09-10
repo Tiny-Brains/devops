@@ -4,8 +4,7 @@
 
 use serde_json::{json, Value};
 
-use crate::cmd::{axon_config, game_and_rest, open_game};
-use crate::registry::Game;
+use crate::cmd::{axon_config, game_and_rest, open_game, reference_observations};
 use crate::store;
 
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -46,30 +45,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("check failed".to_string());
     }
     Ok(())
-}
-
-fn reference_observations(game: &Game) -> Result<Vec<Value>, String> {
-    let refs = game
-        .component
-        .parent()
-        .map(|d| d.join("reference").join("observations.json"))
-        .filter(|p| p.exists())
-        .ok_or_else(|| {
-            format!(
-                "{} ships no reference observations, so there is nothing to validate against.\n\
-                 From a cartridge checkout that is `cargo run --bin reference`.",
-                game.slug
-            )
-        })?;
-    let doc: Value = serde_json::from_str(
-        &std::fs::read_to_string(&refs).map_err(|e| format!("{}: {e}", refs.display()))?,
-    )
-    .map_err(|e| format!("{}: {e}", refs.display()))?;
-    let observations: Vec<Value> = doc["observations"].as_array().cloned().unwrap_or_default();
-    if observations.is_empty() {
-        return Err(format!("{} holds no observations", refs.display()));
-    }
-    Ok(observations)
 }
 
 fn gate(

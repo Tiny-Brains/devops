@@ -284,6 +284,13 @@ orchestrator's secret store and sets only the public half.
 
 ## Status
 
+**Baselines infrastructure, 10 September 2026.** `tinybrains env` hosts the cartridge as a batched
+training environment over JSON Lines -- a pool of independent waves, refilled in place, with the
+per-turn score `finish` answers for a live match. Measured on an M2 Pro at **4,900 seat-turns/s**
+with real colonies (22 ants a seat by turn 300) and 4,100/s through a Python client, against a gate
+of 3,000. It is not the referee and says so on startup. `tinybrains adapt` writes an adapter's `in`
+tensors as `.npy` so a trainer's own encoder can be diffed against the ladder's rather than trusted.
+
 **Decision 46, 10 September 2026 — no compute cap**, recorded in `docs/decisions.md` with the
 measurements that argued it. The loader's manifest gate no longer requires `budgets.flop_caps`;
 `30-seed.sql` writes `infer_us` and names the baselines repo `Tiny-Brains/ants-baselines` (the org

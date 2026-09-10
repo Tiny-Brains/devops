@@ -1,5 +1,6 @@
 mod cartridge;
 mod cmd;
+mod env;
 mod matchfile;
 mod registry;
 mod serve;
@@ -16,7 +17,9 @@ tinybrains -- run a TinyBrains match locally
   tinybrains maps export [GAME] [DIR]        write those boards out as files
   tinybrains view <replay.json>              watch it in a browser
   tinybrains check <model.onnx> <adapter>    would this be admitted?
+  tinybrains adapt <adapter.json> [...]      dump the tensors an adapter produces
   tinybrains conform <replay.json>           replay a recorded match here, and diff
+  tinybrains env [...]                       the cartridge as a training environment
 
 Options
   --out DIR      where replays go (default: ./replays)
@@ -42,8 +45,10 @@ fn dispatch() -> Result<(), String> {
         "maps" => cmd::maps::run(&args[1..]),
         "run" => cmd::play::run(&args[1..]),
         "conform" => cmd::conform::run(&args[1..]),
+        "env" => cmd::env::run(&args[1..]),
         "view" => cmd::view::run(&args[1..]),
         "check" => cmd::check::run(&args[1..]),
+        "adapt" => cmd::adapt::run(&args[1..]),
         other if other.ends_with(".json") => cmd::play::run(&args),
         other => Err(format!("unknown command '{other}'\n\n{USAGE}")),
     }

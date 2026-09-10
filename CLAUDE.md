@@ -53,6 +53,8 @@ tinybrains matches/quick.json                    # play a wave; one replay per r
 tinybrains view replays/quick.json               # watch it (serves the cartridge's own viz bundle)
 tinybrains check model.onnx adapter.json         # would this be admitted?
 tinybrains conform replays/quick.json            # replay a recorded match here and diff
+tinybrains adapt adapter.json --out tensors      # the tensors the adapter actually produces
+tinybrains env --waves 4 --matches-per-wave 16   # the cartridge as a training env, JSON Lines
 ```
 
 `cli/` has **no tests** — `tinybrains conform` is the check (see Architecture). Run it from a
@@ -119,6 +121,14 @@ knows five function names, `cartridge.json`, and the replay envelope, and resolv
 refused on mismatch). It hosts the cartridge through wasmtime and evaluates adapters through **axon
 as a library**, so the component, the evaluator digest and the envelope are the same artifacts the
 fleet uses. Adding a second game is a registry entry and no Rust.
+
+**`cli/src/env.rs` is a training environment and deliberately not a third wave loop.** It has the
+four cartridge functions and a pool that refills them, and none of Kalam's rules: no deadline, no
+strike ceiling, no forfeits, no model loader, no replay envelope. That is what lets it not be a copy
+that drifts -- and it is why its actions are *positional*, which is only correct because a training
+env never forfeits a seat. Needing the explicit `{m, seat, action}` form is the symptom of a rule it
+does not have. It reads live scores out of `finish` every turn, which the cartridge answers for an
+unfinished match; that is the trainer's reward channel and never reaches a model's input.
 
 **`cli/src/wave.rs` is the one place a second implementation is allowed.** Kalam expresses the wave
 loop as an Orion workflow of JSONLogic; this expresses it as Rust, and its docstring names the five

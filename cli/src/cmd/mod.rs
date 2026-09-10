@@ -1,9 +1,13 @@
+pub mod adapt;
 pub mod check;
 pub mod conform;
+pub mod env;
 pub mod games;
 pub mod maps;
 pub mod play;
 pub mod view;
+
+use serde_json::Value;
 
 use crate::registry::{Game, Registry};
 use crate::store;
@@ -58,4 +62,31 @@ pub fn game_and_rest(args: &[String]) -> Result<(Option<String>, Vec<String>), S
         i += 1;
     }
     Ok((slug, rest))
+}
+
+/// The cartridge's own reference observations: what admission validates an adapter against, and so
+/// the only set on which agreeing with the platform proves anything. Read by `check` and by
+/// `adapt`, from one place, because two readers of one file is two readers that can drift.
+pub fn reference_observations(game: &Game) -> Result<Vec<Value>, String> {
+    let refs = game
+        .component
+        .parent()
+        .map(|d| d.join("reference").join("observations.json"))
+        .filter(|p| p.exists())
+        .ok_or_else(|| {
+            format!(
+                "{} ships no reference observations, so there is nothing to validate against.\n\
+                 From a cartridge checkout that is `cargo run --bin reference`.",
+                game.slug
+            )
+        })?;
+    let doc: Value = serde_json::from_str(
+        &std::fs::read_to_string(&refs).map_err(|e| format!("{}: {e}", refs.display()))?,
+    )
+    .map_err(|e| format!("{}: {e}", refs.display()))?;
+    let observations: Vec<Value> = doc["observations"].as_array().cloned().unwrap_or_default();
+    if observations.is_empty() {
+        return Err(format!("{} holds no observations", refs.display()));
+    }
+    Ok(observations)
 }
