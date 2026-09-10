@@ -157,16 +157,28 @@ fn compare(platform: &Value, local: &Value) -> Vec<Diff> {
     }
     // The FIRST divergence only: after one turn differs every later turn differs for free.
     for (i, (a, b)) in pd.iter().zip(ld.iter()).enumerate() {
+        let (a, b) = (turn_of(a), turn_of(b));
         if a != b {
             out.push(Diff {
                 field: format!("deltas[{i}] (turn {})", a["t"]),
-                platform: brief(a),
-                local: brief(b),
+                platform: brief(&a),
+                local: brief(&b),
             });
             break;
         }
     }
     out
+}
+
+/// A delta with its wave-row index dropped.
+///
+/// `m` is a match's position in the wave it was PLAYED in, and a conformance run rebuilds one match
+/// from its envelope alone -- so it is always row 0 here and was row 3, or 11, there. Comparing it
+/// made every replay from a multi-row match file report a spurious difference at turn 0 while its
+/// action stream agreed exactly, which is to say `conform` only worked on the one case that could
+/// not drift. What must reproduce is `t` and `a`: the turn, and what every seat did on it.
+fn turn_of(delta: &Value) -> Value {
+    json!({ "t": delta["t"], "a": delta["a"] })
 }
 
 fn brief(v: &Value) -> String {
