@@ -270,6 +270,22 @@ services:
     volumes:
       - ants-pkg:/out
 
+  # One-shot: puts Jodi's package where the loader reads it.
+  #
+  # Jodi ships no server -- it is declarations loaded into an orion-server this repo owns -- but it
+  # does ship build output: two wasm plugins, and `channels/` + `workflows/` generated from
+  # scripts/gen-jodi.py. None of that is committed any more, so it arrives as an image rather than
+  # as a bind-mounted checkout.
+  #
+  #   JODI_REF=tinybrains/jodi:dev            built here from JODI_DIR (the default)
+  #   JODI_REF=ghcr.io/tiny-brains/jodi:v1    pulled, pinned, no checkout at all
+  jodi-artifacts:
+    build:
+      context: ${JODI_DIR:-../jodi}
+    image: ${JODI_REF:-tinybrains/jodi:dev}
+    volumes:
+      - jodi-pkg:/out
+
   # One-shot: declares the deployment facts, makes the buckets, and installs each package into the
   # server that runs it. soma and jodi go to SOMA_ORION_ADMIN and one call reaches every node of
   # that cluster; kalam goes to each entry of KALAM_ORION_ADMINS in turn, because each replica has
@@ -279,6 +295,8 @@ services:
       context: ./compose/loader
     depends_on:
       ants-artifacts:
+        condition: service_completed_successfully
+      jodi-artifacts:
         condition: service_completed_successfully
       soma:
         condition: service_healthy
@@ -294,13 +312,17 @@ services:
         condition: service_healthy
     volumes:
       - ${SOMA_DIR:-../soma}:/pkg/soma:ro
-      - ${JODI_DIR:-../jodi}:/pkg/jodi:ro
+      - jodi-pkg:/pkg/jodi:ro
       - ${KALAM_DIR:-../kalam}:/pkg/kalam:ro
       # The cartridge's build output, from the volume `ants-artifacts` populates -- NOT from a
       # sibling checkout. That is what carries reference/observations.json, so the reference set is
       # now the engine's own rather than axon's one worst-case fixture standing in for it.
       - ants-pkg:/pkg/ants:ro
       - ${AXON_DIR:-../axon}/tests/fixtures/ants-observation.json:/pkg/reference/ants-observation.json:ro
+      # Plugin signatures. NOT part of any package: a signature belongs to whoever holds the trust
+      # key, and a package that ships as an image several deployments share cannot carry one. Each
+      # load-package.sh reads PLUGIN_SIG_DIR; scripts/setup/sign-plugins.sh fills this directory.
+      - ./keys/signatures:/sig:ro
       # The deploy steps that are not `loader` itself, mounted rather than baked in:
       #   docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
       - ./scripts/deploy:/deploy:ro
@@ -323,6 +345,7 @@ services:
       JODI_ALLOW_PRIVATE_DB: "1"
       KALAM_ALLOW_PRIVATE_URLS: "1"
       ADMISSION_LOADER_URL: http://axon-admission:9090
+      PLUGIN_SIG_DIR: /sig
       # MODEL_LOADER_URL is deliberately unset: axon is a sidecar in each replica's namespace, so
       # the connector's committed default is already right on every replica.
     restart: "no"
@@ -386,3 +409,5 @@ volumes:
   blob-data:
   # The cartridge's build output. Populated by `ants-artifacts` on every `up`, never by a checkout.
   ants-pkg:
+  # Jodi's package: clocks, workflows, connectors, plugins. Populated by `jodi-artifacts`.
+  jodi-pkg:

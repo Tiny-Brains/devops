@@ -85,6 +85,26 @@ replicas over one shared state and the `wave` singleton becomes fleet-wide, so e
 ever plays while the other N-1 poll a held row looking perfectly healthy. Kalam's fence is the
 leased claim on `matches`, not Orion's, so nothing is lost.
 
+**Packages come from images, not checkouts — two of four converted.** `ants` and `jodi` ship
+artifact images; `<pkg>-artifacts` one-shots copy them into `ants-pkg` and `jodi-pkg`, and the loader
+mounts those where it used to mount the sibling directories. `soma` and `kalam` are still bind
+mounts. `JODI_REF` works exactly as `ANTS_REF` does: unset it builds from `JODI_DIR`, set to a tag
+it pins.
+
+**Plugin signatures live in `keys/signatures/`, not beside the components.** A signature belongs to
+whoever holds the trust key, and a package that ships as an immutable image several deployments can
+share cannot carry one. `scripts/setup/sign-plugins.sh` reads components out of the package volumes
+(and out of the sibling checkouts that are not converted yet), writes `<component>.sig` into
+`keys/signatures/`, and compose mounts that at `/sig` with `PLUGIN_SIG_DIR=/sig`. Each package's
+`load-package.sh` honours it, falling back to beside the component when unset. This also ended this
+repo writing `.sig` files into `../jodi` and `../kalam`.
+
+**A package volume holds the whole package, including its `load-package.sh`.** Rebuild the artifact
+image AND re-run its `-artifacts` one-shot after editing anything in a converted package — a stale
+volume runs the script it was populated with, which fails like a bug in the change you just made.
+Found on 10 September 2026: a patched `load-package.sh` that never reached the volume loaded the
+plugins unsigned, and a node with trust keys refuses that with a bare 400.
+
 **The cartridge's artifacts come from an image, not a checkout.** `ants` stopped committing its
 build output on 10 September 2026; it ships an artifact image carrying the component, its manifests,
 the board catalogue, the reference observations and the viewer under `/artifacts/`. The
