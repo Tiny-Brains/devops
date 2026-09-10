@@ -132,7 +132,7 @@ SQL
   # the one the loaded engine was built with. The worst case must be in the reference set or the
   # gate is theatre; until ants publishes one, axon's worst-case fixture stands in.
   manifest="${CARTRIDGE_MANIFEST:-$PKG/kalam/plugins/tb-ants/cartridge.json}"
-  [ -r "$manifest" ] || { echo "no cartridge manifest at $manifest -- run kalam/scripts/vendor-engine.sh" >&2; exit 1; }
+  [ -r "$manifest" ] || { echo "no cartridge manifest at $manifest -- the kalam package volume is empty or stale: docker compose run --rm --no-deps kalam-artifacts" >&2; exit 1; }
   # adapter_ops_max only: there is no compute budget since decision 46. A manifest still declaring
   # flop_caps is stale rather than wrong, and is ignored.
   jq -e '.budgets.adapter_ops_max' "$manifest" > /dev/null \

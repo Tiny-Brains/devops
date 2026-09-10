@@ -13,10 +13,10 @@
 # being possible when a package became an immutable image several deployments can share. Each
 # package's `load-package.sh` now reads `PLUGIN_SIG_DIR`, which compose points here.
 #
-# WHERE THE COMPONENTS COME FROM. A converted package is a volume populated from its artifact image,
-# so its components are read out of the volume rather than a checkout; an unconverted one is still a
-# sibling directory. Both are listed below, and a source that is not there is skipped rather than
-# fatal -- so this works before and after each package's conversion.
+# WHERE THE COMPONENTS COME FROM. Every package that ships plugins now ships as an artifact image,
+# so components are read out of the volume its `-artifacts` one-shot populated -- never a checkout.
+# `from_checkout` is kept for a package that has not been converted; a source that is not there is
+# skipped rather than fatal. Bring the stack up before signing, or there is nothing to sign.
 #
 # Re-run after any plugin or engine rebuild, and after trust-keygen.sh --force. A stale signature is
 # not silent: it fails at load, naming the digest it does not verify over.
@@ -95,7 +95,7 @@ sign_one() {
 }
 
 signed=0
-for spec in "jodi:volume:jodi-pkg" "kalam:checkout:${KALAM_DIR:-../kalam}"; do
+for spec in "jodi:volume:jodi-pkg" "kalam:volume:kalam-pkg"; do
   pkg=${spec%%:*}; rest=${spec#*:}; kind=${rest%%:*}; where=${rest#*:}
   case "$kind" in
     volume)   root=$(from_volume   "$pkg" "$where") || continue ;;

@@ -85,11 +85,12 @@ replicas over one shared state and the `wave` singleton becomes fleet-wide, so e
 ever plays while the other N-1 poll a held row looking perfectly healthy. Kalam's fence is the
 leased claim on `matches`, not Orion's, so nothing is lost.
 
-**Packages come from images, not checkouts — two of four converted.** `ants` and `jodi` ship
-artifact images; `<pkg>-artifacts` one-shots copy them into `ants-pkg` and `jodi-pkg`, and the loader
-mounts those where it used to mount the sibling directories. `soma` and `kalam` are still bind
-mounts. `JODI_REF` works exactly as `ANTS_REF` does: unset it builds from `JODI_DIR`, set to a tag
-it pins.
+**Packages come from images, not checkouts — three of four converted.** `ants`, `jodi` and `kalam`
+ship artifact images; `<pkg>-artifacts` one-shots copy them into `ants-pkg`, `jodi-pkg` and
+`kalam-pkg`, and the loader — and every replica — mounts those where they used to mount the sibling
+directories. Only `soma` is still a bind mount, and it commits no build output. `JODI_REF` and
+`KALAM_REF` work exactly as `ANTS_REF` does: unset they build from `<PKG>_DIR`, set to a tag they
+pin.
 
 **Plugin signatures live in `keys/signatures/`, not beside the components.** A signature belongs to
 whoever holds the trust key, and a package that ships as an immutable image several deployments can
@@ -105,15 +106,18 @@ volume runs the script it was populated with, which fails like a bug in the chan
 Found on 10 September 2026: a patched `load-package.sh` that never reached the volume loaded the
 plugins unsigned, and a node with trust keys refuses that with a bare 400.
 
-**The cartridge's artifacts come from an image, not a checkout.** `ants` stopped committing its
-build output on 10 September 2026; it ships an artifact image carrying the component, its manifests,
-the board catalogue, the reference observations and the viewer under `/artifacts/`. The
-`ants-artifacts` one-shot copies that into the `ants-pkg` volume, and the loader mounts the volume
-where it used to mount `../ants` — so `games.reference_observations` is now the engine's own set
-rather than axon's single worst-case fixture standing in for it. `ANTS_REF` selects what runs:
-unset, it builds `tinybrains/ants:dev` from `ANTS_DIR`; set to a published tag it pins the engine
-digest as a deployment decision and needs no ants checkout at all. Kalam still loads its own
-vendored copy — that conversion has not landed yet, so two copies of the component still exist.
+**There is one copy of the engine, and `ANTS_REF` names it.** `ants` stopped committing its build
+output on 10 September 2026; it ships an artifact image carrying the component, its manifests, the
+board catalogue, the reference observations and the viewer under `/artifacts/`. Kalam's image takes
+the component from that image rather than vendoring it, so the two cannot drift — which they once
+did, silently, with the ladder playing a component ants does not ship. `games.reference_observations`
+is now the engine's own 10-observation set rather than axon's single worst-case fixture standing in
+for it.
+
+`ANTS_REF` therefore decides which engine the ladder plays: unset it builds `tinybrains/ants:dev`
+from `ANTS_DIR`; set to a published tag it pins the digest. **A deployment should pin it.** Built
+`:dev`, a rebuild that changes the component moves the digest under whatever season is live, and the
+failure is the silent one — the wave claims nothing, for ever.
 
 **The engine digest agrees in three places by derivation, never by typing.** `compose/orion/
 entrypoint.sh` derives `KALAM_ENGINE_DIGEST` from `../kalam/plugins/tb-ants/tb-ants.wasm`;
@@ -187,13 +191,15 @@ never lives here.
   judges a trial by a rule the wave did not play by), and `prior_mu`/`prior_sigma` in
   `soma.toml.tmpl` == the numbers in `compose/db-init/30-seed.sql` (a baseline's first fold reads
   `[vars]` as its own prior). The check script asserts both.
-- **Re-run `scripts/setup/sign-plugins.sh` after any plugin or engine rebuild**, including
-  `kalam/scripts/vendor-engine.sh`. A stale signature brings the node up `degraded` with quarantined
-  channels.
-- **Kalam vendors the cartridge, so two committed copies of one component exist and can drift.**
-  When they do nothing errors — the ladder plays a component `ants` does not ship, with a viewer
-  built against the other. `scripts/check/configs.sh` compares them; it has caught this before, from
-  an edit that changed no behaviour at all.
+- **Re-run `scripts/setup/sign-plugins.sh` after any plugin or engine rebuild.** It reads components
+  out of the package volumes, so bring those up first; a stale signature brings the node up
+  `degraded` with quarantined channels.
+- **Kalam no longer vendors the cartridge, so the old drift is gone — a stale VOLUME replaces it.**
+  There used to be two committed copies of one component and nothing errored when they diverged.
+  There is one copy now, taken from the cartridge's image. What can still go wrong is a `kalam-pkg`
+  volume populated from an older image: `scripts/check/configs.sh` compares the volume against what
+  `ANTS_REF` ships, and the fix is `docker compose build kalam-artifacts && docker compose run --rm
+  --no-deps kalam-artifacts`.
 - **Restarting a `kalam-N` orphans its `axon-N`, and both keep reporting healthy.** The sidecar
   joins the replica's network namespace (`network_mode: service:kalam-N`), and a `docker compose
   restart` of the replica leaves the sidecar holding the OLD namespace. Its healthcheck curls its

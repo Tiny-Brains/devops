@@ -264,7 +264,7 @@ upload arrives and again by every node that loads it. A fresh checkout mints its
 docker compose run --rm loader load
 ```
 
-Re-run `setup/sign-plugins.sh` after any plugin rebuild or `kalam/scripts/vendor-engine.sh`. A stale or
+Re-run `setup/sign-plugins.sh` after any plugin or engine rebuild. A stale or
 missing signature is not silent: the node reports `degraded`, names the plugin and the digest under
 `plugins.failed_to_load` with `stage: "signature"`, and quarantines the channels whose workflows
 needed it. The private half never lives here — a deployment signs with its own key from its

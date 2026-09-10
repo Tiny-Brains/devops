@@ -171,26 +171,30 @@ else
   skip "orion-server parse (no docker, or the image is not built yet: docker compose build soma)"
 fi
 
-# Kalam vendors the cartridge rather than building it, so two committed copies exist and can drift.
-# When they do NOTHING ERRORS: the ladder plays a component that is not the one ants ships, with a
-# viewer built against the other. It has happened once already, from an edit that changed no
-# behaviour -- a doc comment shifted the line numbers Rust bakes into panic locations.
-ANTS="${ANTS_DIR:-../ants}"
-VENDORED="../kalam/plugins/tb-ants/tb-ants.wasm"
-if [ -r "$ANTS/tb-ants.wasm" ] && [ -r "$VENDORED" ]; then
-  if command -v sha256sum > /dev/null 2>&1; then H=sha256sum; else H="shasum -a 256"; fi
-  a=$($H "$ANTS/tb-ants.wasm" | cut -d' ' -f1)
-  b=$($H "$VENDORED" | cut -d' ' -f1)
-  if [ "$a" = "$b" ]; then
-    ok "the vendored engine is the one ants ships (${a%${a#????????}}...)"
+# Kalam used to vendor the cartridge, so two committed copies of one component existed and could
+# drift -- and when they did NOTHING ERRORED: the ladder played a component ants does not ship, with
+# a viewer built against the other. It happened once, from an edit that changed no behaviour at all.
+#
+# There is now ONE copy. kalam's artifact image takes the component from the cartridge's image, so
+# the two cannot disagree by construction and there is nothing left to compare. What can still go
+# wrong is a package volume left over from an older image, which is a different check: the digest
+# the replicas derive against what the loader wrote onto the game row.
+KALAM_VOL="${COMPOSE_PROJECT_NAME:-$(basename "$(cd .. && pwd)")}_kalam-pkg"
+if command -v docker > /dev/null 2>&1 && docker volume inspect "$KALAM_VOL" > /dev/null 2>&1; then
+  vol=$(docker run --rm -v "$KALAM_VOL":/pkg:ro busybox sha256sum /pkg/plugins/tb-ants/tb-ants.wasm 2>/dev/null | cut -d' ' -f1)
+  img=$(docker run --rm "${ANTS_REF:-tinybrains/ants:dev}" sha256sum /artifacts/tb-ants.wasm 2>/dev/null | cut -d' ' -f1)
+  if [ -z "$vol" ] || [ -z "$img" ]; then
+    skip "engine volume (could not read one of the two)"
+  elif [ "$vol" = "$img" ]; then
+    ok "the package volume carries the engine ${ANTS_REF:-tinybrains/ants:dev} ships (${vol%${vol#????????}}...)"
   else
-    bad "kalam's vendored engine is not the one ants ships
-       ants     sha256:$a
-       kalam    sha256:$b
-     run kalam/scripts/vendor-engine.sh, then scripts/setup/sign-plugins.sh"
+    bad "the kalam package volume is stale -- it is not the engine ${ANTS_REF:-tinybrains/ants:dev} ships
+       image    sha256:$img
+       volume   sha256:$vol
+     docker compose build kalam-artifacts && docker compose run --rm --no-deps kalam-artifacts"
   fi
 else
-  skip "vendored engine (no ants checkout beside this one, or it has not been built)"
+  skip "engine volume (no docker, or the stack has not been up: docker compose up -d)"
 fi
 
 if [ "$fail" -eq 0 ]; then

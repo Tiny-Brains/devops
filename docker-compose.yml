@@ -53,9 +53,12 @@ x-kalam: &kalam
       ORION_VERSION: ${ORION_VERSION:-1.7.0}
   volumes:
     - ./compose/orion/kalam.toml.tmpl:/etc/orion/kalam.toml.tmpl:ro
-    # Only for the engine digest, derived at boot.
-    - ../kalam:/pkg/kalam:ro
+    # Only for the engine digest, derived at boot -- from the package volume, so a replica and the
+    # loader cannot be looking at two different components.
+    - kalam-pkg:/pkg/kalam:ro
   depends_on:
+    kalam-artifacts:
+      condition: service_completed_successfully
     db:
       condition: service_healthy
   # drain is a fixed sleep and buys a routeless cron-only node nothing; force is the real outer
@@ -270,6 +273,27 @@ services:
     volumes:
       - ants-pkg:/out
 
+  # One-shot: puts Kalam's package -- and with it the engine every replica plays -- where the
+  # loader and the replicas read it.
+  #
+  # THE CARTRIDGE IS NOT COPIED INTO KALAM ANY MORE. There used to be two committed copies of one
+  # component, ants' and the one vendor-engine.sh left in kalam, and nothing errored when they
+  # drifted: the ladder played a component ants does not ship, with a viewer built against the
+  # other. kalam's image takes the component straight from the cartridge's image, so ANTS_REF alone
+  # decides which engine runs -- and a deployment should pin it rather than build `:dev`, because a
+  # digest that moves under a live season is a queue that stops being claimed.
+  kalam-artifacts:
+    build:
+      context: ${KALAM_DIR:-../kalam}
+      args:
+        ANTS_REF: ${ANTS_REF:-tinybrains/ants:dev}
+    image: ${KALAM_REF:-tinybrains/kalam:dev}
+    depends_on:
+      ants-artifacts:
+        condition: service_completed_successfully
+    volumes:
+      - kalam-pkg:/out
+
   # One-shot: puts Jodi's package where the loader reads it.
   #
   # Jodi ships no server -- it is declarations loaded into an orion-server this repo owns -- but it
@@ -298,6 +322,8 @@ services:
         condition: service_completed_successfully
       jodi-artifacts:
         condition: service_completed_successfully
+      kalam-artifacts:
+        condition: service_completed_successfully
       soma:
         condition: service_healthy
       kalam-1:
@@ -313,7 +339,7 @@ services:
     volumes:
       - ${SOMA_DIR:-../soma}:/pkg/soma:ro
       - jodi-pkg:/pkg/jodi:ro
-      - ${KALAM_DIR:-../kalam}:/pkg/kalam:ro
+      - kalam-pkg:/pkg/kalam:ro
       # The cartridge's build output, from the volume `ants-artifacts` populates -- NOT from a
       # sibling checkout. That is what carries reference/observations.json, so the reference set is
       # now the engine's own rather than axon's one worst-case fixture standing in for it.
@@ -411,3 +437,5 @@ volumes:
   ants-pkg:
   # Jodi's package: clocks, workflows, connectors, plugins. Populated by `jodi-artifacts`.
   jodi-pkg:
+  # Kalam's package, including the engine component every replica derives its digest from.
+  kalam-pkg:
