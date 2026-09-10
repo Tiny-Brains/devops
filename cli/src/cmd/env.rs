@@ -24,11 +24,11 @@
 
 use std::io::{BufRead, Write};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cartridge::Cartridge;
 use crate::cmd::open_game;
-use crate::env::{presets_of, Config, Pool};
+use crate::env::{Config, Pool, presets_of};
 use crate::store::short;
 
 pub fn run(args: &[String]) -> Result<(), String> {

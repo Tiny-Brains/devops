@@ -37,15 +37,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     // The same seeds on a different engine are a different match, so a silent play would make any
     // comparison meaningless.
-    if let Some(want) = &mf.engine_digest {
-        if want != &game.engine_digest {
-            eprintln!(
-                "warning: {} names engine {want}\n         but {} resolves to {}",
-                file.display(),
-                game.slug,
-                game.engine_digest
-            );
-        }
+    if let Some(want) = &mf.engine_digest
+        && want != &game.engine_digest
+    {
+        eprintln!(
+            "warning: {} names engine {want}\n         but {} resolves to {}",
+            file.display(),
+            game.slug,
+            game.engine_digest
+        );
     }
 
     let cart = Cartridge::open(&game.component).map_err(|e| e.to_string())?;

@@ -3,7 +3,7 @@
 //! `wave.rs` copies a loop Orion expresses as a workflow, and copies drift. A replay carries its
 //! board, its seed and its seats, which makes the agreement checkable rather than assumed.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cartridge::Cartridge;
 use crate::cmd::{axon_replica, game_and_rest, open_game};
@@ -19,9 +19,7 @@ struct Diff {
 
 pub fn run(args: &[String]) -> Result<(), String> {
     let (slug, rest) = game_and_rest(args)?;
-    let path = rest
-        .first()
-        .ok_or("which replay?\n\n  tinybrains conform replays/quick-0.json")?;
+    let path = rest.first().ok_or("which replay?\n\n  tinybrains conform replays/quick-0.json")?;
     let recorded: Value = serde_json::from_str(
         &std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?,
     )
@@ -36,21 +34,19 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mf = mf?;
 
     let game = open_game(Some(
-        slug.as_deref()
-            .or_else(|| recorded.get("game").and_then(Value::as_str))
-            .unwrap_or("ants"),
+        slug.as_deref().or_else(|| recorded.get("game").and_then(Value::as_str)).unwrap_or("ants"),
     ))?;
 
     // A different engine is not a failed run, it is a meaningless one.
-    if let Some(want) = recorded.get("engine_digest").and_then(Value::as_str) {
-        if want != game.engine_digest {
-            return Err(format!(
-                "this replay was played on engine\n  {want}\nand {} resolves to\n  {}\n\
+    if let Some(want) = recorded.get("engine_digest").and_then(Value::as_str)
+        && want != game.engine_digest
+    {
+        return Err(format!(
+            "this replay was played on engine\n  {want}\nand {} resolves to\n  {}\n\
                  The same seeds on a different engine are a different match, so there is nothing \
                  to compare. Check out the cartridge at that digest and try again.",
-                game.slug, game.engine_digest
-            ));
-        }
+            game.slug, game.engine_digest
+        ));
     }
 
     println!(
@@ -101,12 +97,8 @@ fn match_file_for(env: &Value) -> Result<Value, String> {
 
     let mut out_seats = Vec::new();
     for s in seats {
-        let w = s["weights_hash"]
-            .as_str()
-            .ok_or("a seat in this replay has no weights_hash")?;
-        let a = s["adapter_hash"]
-            .as_str()
-            .ok_or("a seat in this replay has no adapter_hash")?;
+        let w = s["weights_hash"].as_str().ok_or("a seat in this replay has no weights_hash")?;
+        let a = s["adapter_hash"].as_str().ok_or("a seat in this replay has no adapter_hash")?;
         out_seats.push(json!({
             "seat": s["seat"],
             "weights_hash": w,
@@ -134,17 +126,22 @@ fn compare(platform: &Value, local: &Value) -> Vec<Diff> {
     let mut out = Vec::new();
     let mut note = |field: &str, a: &Value, b: &Value| {
         if a != b {
-            out.push(Diff {
-                field: field.to_string(),
-                platform: brief(a),
-                local: brief(b),
-            });
+            out.push(Diff { field: field.to_string(), platform: brief(a), local: brief(b) });
         }
     };
 
     for f in [
-        "seed", "preset", "map", "map_id", "engine_digest", "evaluator_digest", "dialect_version",
-        "reason", "turns", "engine_ranks", "scores",
+        "seed",
+        "preset",
+        "map",
+        "map_id",
+        "engine_digest",
+        "evaluator_digest",
+        "dialect_version",
+        "reason",
+        "turns",
+        "engine_ranks",
+        "scores",
     ] {
         note(f, &platform[f], &local[f]);
     }

@@ -2,7 +2,7 @@
 //! observations. Necessary and not sufficient: no download allowlist here, and the size class is
 //! reported rather than decided because that table is Jodi's policy.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cmd::{axon_config, game_and_rest, open_game, reference_observations};
 use crate::store;
@@ -14,7 +14,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let args: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
     let (slug, files) = game_and_rest(&args)?;
     if files.len() != 2 {
-        return Err("which model?\n\n  tinybrains check out/model.onnx out/adapter.json".to_string());
+        return Err(
+            "which model?\n\n  tinybrains check out/model.onnx out/adapter.json".to_string()
+        );
     }
     let game = open_game(slug.as_deref())?;
     let observations = reference_observations(&game)?;
@@ -63,7 +65,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         );
     } else {
         println!();
-        println!("This is not admission. It has no download allowlist and does not decide a size class,");
+        println!(
+            "This is not admission. It has no download allowlist and does not decide a size class,"
+        );
         println!("so a pass here is necessary and not sufficient.");
     }
     if !ok {
@@ -107,7 +111,7 @@ fn gate(
             return Err(format!(
                 "inspect refused: {}",
                 serde_json::to_value(e).unwrap_or_default()
-            ))
+            ));
         }
     };
     if !quiet {
@@ -140,9 +144,7 @@ fn gate(
 }
 
 fn strings(v: &Value) -> Vec<&str> {
-    v.as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-        .unwrap_or_default()
+    v.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default()
 }
 
 fn report_graph(ins: &Value) {

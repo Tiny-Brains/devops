@@ -49,7 +49,8 @@ impl MatchFile {
     pub fn load(path: &Path) -> Result<MatchFile, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let doc: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let doc: Value =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         // Paths inside the file resolve against the file's own directory, so a match file and the
         // models it names travel together.
         let base: PathBuf = path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -69,10 +70,7 @@ impl MatchFile {
 
         Ok(MatchFile {
             game: doc.get("game").and_then(Value::as_str).unwrap_or("ants").to_string(),
-            engine_digest: doc
-                .get("engine_digest")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            engine_digest: doc.get("engine_digest").and_then(Value::as_str).map(str::to_string),
             vars: doc.get("vars").cloned().unwrap_or(Value::Null),
             rows,
         })
@@ -112,10 +110,7 @@ impl Row {
             seats.push(Seat::parse(s, i, &id, base)?);
         }
 
-        let seat_count = r
-            .get("seat_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(seats.len() as u64);
+        let seat_count = r.get("seat_count").and_then(Value::as_u64).unwrap_or(seats.len() as u64);
         if seat_count as usize != seats.len() {
             return Err(format!(
                 "row '{id}': seat_count is {seat_count} but {} seats are named",
@@ -138,12 +133,7 @@ impl Seat {
     fn parse(s: &Value, index: usize, row: &str, base: &Path) -> Result<Seat, String> {
         let seat = s.get("seat").and_then(Value::as_u64).unwrap_or(index as u64);
         let here = format!("row '{row}' seat {seat}");
-        let label = |dflt: &str| {
-            s.get("label")
-                .and_then(Value::as_str)
-                .unwrap_or(dflt)
-                .to_string()
-        };
+        let label = |dflt: &str| s.get("label").and_then(Value::as_str).unwrap_or(dflt).to_string();
 
         // A scripted seat names no model, so it must not be asked for one.
         if let Some(script) = s.get("script").and_then(|v| v.as_array()) {
@@ -196,9 +186,5 @@ impl Seat {
 
 /// A seat's default name: the file it was loaded from, without the extension.
 fn name_of(spec: &str) -> String {
-    Path::new(spec)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(spec)
-        .to_string()
+    Path::new(spec).file_stem().and_then(|s| s.to_str()).unwrap_or(spec).to_string()
 }

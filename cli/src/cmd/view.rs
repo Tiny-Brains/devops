@@ -25,9 +25,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let replay: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
 
     let game = open_game(Some(
-        slug.as_deref()
-            .or_else(|| replay.get("game").and_then(Value::as_str))
-            .unwrap_or("ants"),
+        slug.as_deref().or_else(|| replay.get("game").and_then(Value::as_str)).unwrap_or("ants"),
     ))?;
     let viz = serve::viz_dir(&game)?;
 
@@ -37,17 +35,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .and_then(|v| v["engine_digest"].as_str().map(str::to_string));
-    if let (Some(built), Some(played)) = (
-        built.as_deref(),
-        replay.get("engine_digest").and_then(Value::as_str),
-    ) {
-        if built != played {
-            eprintln!(
-                "warning: this replay was played on\n           {played}\n\
+    if let (Some(built), Some(played)) =
+        (built.as_deref(), replay.get("engine_digest").and_then(Value::as_str))
+        && built != played
+    {
+        eprintln!(
+            "warning: this replay was played on\n           {played}\n\
                  \x20        and the viewer was built against\n           {built}\n\
                  \x20        it will re-simulate with the wrong engine -- rebuild viz/"
-            );
-        }
+        );
     }
 
     println!(

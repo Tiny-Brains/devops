@@ -16,10 +16,7 @@ use std::path::{Path, PathBuf};
 pub fn serve(viz: &Path, replay_json: &str, open: bool) -> Result<(), String> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .map_err(|e| format!("cannot bind loopback: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .port();
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let url = format!("http://127.0.0.1:{port}/");
 
     println!("{url}");

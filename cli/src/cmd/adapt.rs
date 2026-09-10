@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cmd::{open_game, reference_observations};
 
@@ -50,8 +50,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
 
     let bytes = std::fs::read(&rest[0]).map_err(|e| format!("{}: {e}", rest[0]))?;
-    let adapter = axon::dialect::Adapter::parse(&bytes)
-        .map_err(|e| format!("{}: {e}", rest[0]))?;
+    let adapter = axon::dialect::Adapter::parse(&bytes).map_err(|e| format!("{}: {e}", rest[0]))?;
 
     let game = open_game(slug.as_deref())?;
     let (observations, source) = match &obs_file {
@@ -60,11 +59,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
     };
     let budget = game.budget("adapter_ops_max", 1_000_000);
 
-    println!("{} against {} ({} observation{})",
+    println!(
+        "{} against {} ({} observation{})",
         rest[0],
         source,
         observations.len(),
-        if observations.len() == 1 { "" } else { "s" });
+        if observations.len() == 1 { "" } else { "s" }
+    );
     println!("    dialect          {}", adapter.dialect);
     println!("    evaluator        {}", axon::dialect::evaluator_digest());
     println!();
@@ -124,8 +125,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", mpath.display()))?;
 
     println!();
-    println!("wrote {} case{} to {}", cases.len(),
-        if cases.len() == 1 { "" } else { "s" }, out.display());
+    println!(
+        "wrote {} case{} to {}",
+        cases.len(),
+        if cases.len() == 1 { "" } else { "s" },
+        out.display()
+    );
     println!("these are the ladder's own tensors -- diff your trainer's encoder against them");
     Ok(())
 }
@@ -145,10 +150,7 @@ fn npy(t: &axon::dialect::Tensor) -> Result<Vec<u8>, String> {
     let shape = match t.shape.len() {
         0 => "()".to_string(),
         1 => format!("({},)", t.shape[0]),
-        _ => format!(
-            "({})",
-            t.shape.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
-        ),
+        _ => format!("({})", t.shape.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")),
     };
     let head = format!("{{'descr': '{descr}', 'fortran_order': False, 'shape': {shape}, }}");
     let mut pad = 64 - ((10 + head.len() + 1) % 64);
@@ -167,8 +169,7 @@ fn npy(t: &axon::dialect::Tensor) -> Result<Vec<u8>, String> {
 
 /// One observation, a bare array of them, or the cartridge's `{"observations": [...]}` envelope.
 fn load_observations(path: &std::path::Path) -> Result<Vec<Value>, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let doc: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(match doc {
         Value::Array(a) => a,

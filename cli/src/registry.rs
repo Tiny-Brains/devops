@@ -78,16 +78,12 @@ impl Registry {
             Some(built_in),
             cached.ok(),
         ];
-        candidates
-            .into_iter()
-            .flatten()
-            .find(|p| p.exists())
-            .ok_or_else(|| {
-                "no games registry.\n\
+        candidates.into_iter().flatten().find(|p| p.exists()).ok_or_else(|| {
+            "no games registry.\n\
                  A project carries its own as `games.toml`; clone drill for one that works,\n\
                  or point TINYBRAINS_REGISTRY at a registry.toml."
-                    .to_string()
-            })
+                .to_string()
+        })
     }
 
     pub fn resolve(&self, slug: &str, registry_path: &Path) -> Result<Game, String> {
@@ -119,7 +115,7 @@ impl Registry {
             _ => {
                 return Err(format!(
                     "game '{slug}' declares neither a `path` checkout nor a `repo` + `release`"
-                ))
+                ));
             }
         };
         let component = entry
@@ -147,8 +143,8 @@ impl Registry {
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -213,10 +209,6 @@ impl Game {
 
     /// No number the game owns is ever typed into this binary.
     fn number(&self, table: &str, key: &str, dflt: u64) -> u64 {
-        self.manifest
-            .get(table)
-            .and_then(|t| t.get(key))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(dflt)
+        self.manifest.get(table).and_then(|t| t.get(key)).and_then(|v| v.as_u64()).unwrap_or(dflt)
     }
 }

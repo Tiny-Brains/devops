@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cartridge::{Cartridge, Fault};
 use crate::matchfile::{MatchFile, Row};
@@ -251,9 +251,7 @@ pub fn run(
     }
 
     // Every match has ended, so one `finish` answers the whole wave.
-    let fin = cart
-        .invoke(&f(game, "finish"), &json!({ "wave_state": state }))
-        .map_err(fault)?;
+    let fin = cart.invoke(&f(game, "finish"), &json!({ "wave_state": state })).map_err(fault)?;
     let results = fin["results"].as_array().cloned().unwrap_or_default();
 
     for (m, row) in mf.rows.iter().enumerate() {
@@ -378,9 +376,7 @@ fn forfeited(view: &Value) -> bool {
 }
 
 fn ints(v: &Value) -> Vec<i64> {
-    v.as_array()
-        .map(|a| a.iter().map(|x| x.as_i64().unwrap_or(0)).collect())
-        .unwrap_or_default()
+    v.as_array().map(|a| a.iter().map(|x| x.as_i64().unwrap_or(0)).collect()).unwrap_or_default()
 }
 
 /// `tb.<slug>.<label>` -- the platform's namespace convention, not this binary's knowledge of any
@@ -420,9 +416,9 @@ pub fn check_uniform(rows: &[Row]) -> Result<(), String> {
 fn scripted_orders(script: &[Value], turn: usize, ants: usize) -> Value {
     let orders: Vec<Value> = match script.get(turn) {
         Some(Value::String(one)) => vec![json!(one); ants],
-        Some(Value::Array(per_ant)) => (0..ants)
-            .map(|i| per_ant.get(i).cloned().unwrap_or(json!("-")))
-            .collect(),
+        Some(Value::Array(per_ant)) => {
+            (0..ants).map(|i| per_ant.get(i).cloned().unwrap_or(json!("-"))).collect()
+        }
         _ => vec![json!("-"); ants],
     };
     Value::Array(orders)

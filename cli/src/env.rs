@@ -27,7 +27,7 @@
 //! **Nothing here knows what game it is running.** Five function names, `cartridge.json` for the
 //! presets and the seat counts, and JSON in both directions.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cartridge::{Cartridge, Fault};
 use crate::registry::Game;

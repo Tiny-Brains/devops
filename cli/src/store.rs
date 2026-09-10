@@ -36,9 +36,7 @@ pub fn put(kind: axon::store::Kind, bytes: &[u8]) -> Result<String, String> {
     let hash = digest(bytes);
     let store = axon::store::DirStore::new(models_dir()?);
     if !store.has(kind, &hash) {
-        store
-            .put(kind, &hash, bytes)
-            .map_err(|e| format!("cannot store {hash}: {e:?}"))?;
+        store.put(kind, &hash, bytes).map_err(|e| format!("cannot store {hash}: {e:?}"))?;
     }
     Ok(hash)
 }
@@ -48,11 +46,7 @@ pub fn bytes_of(spec: &str, base: &Path) -> Result<Vec<u8>, String> {
     if spec.starts_with("http://") || spec.starts_with("https://") {
         return fetch_url(spec);
     }
-    let p = if Path::new(spec).is_absolute() {
-        PathBuf::from(spec)
-    } else {
-        base.join(spec)
-    };
+    let p = if Path::new(spec).is_absolute() { PathBuf::from(spec) } else { base.join(spec) };
     std::fs::read(&p).map_err(|e| format!("cannot read {}: {e}", p.display()))
 }
 
