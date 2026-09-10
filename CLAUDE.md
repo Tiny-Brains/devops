@@ -49,6 +49,7 @@ docker compose run --rm --no-deps --entrypoint /deploy/declare-engine.sh loader
 
 # the CLI
 cd cli && cargo build                            # or: cargo install --path cli
+docker compose --profile tools build cli-artifacts   # the same binary as an image, no toolchain needed
 tinybrains games                                 # what is registered, at which digest
 tinybrains matches/quick.json                    # play a wave; one replay per row
 tinybrains view replays/quick.json               # watch it (serves the cartridge's own viz bundle)
@@ -209,7 +210,11 @@ never lives here.
   10 September 2026 by restarting kalam-1 for the engine cutover and then wondering why the loader
   had vanished.
 - **`axon` is a *path* dependency of `cli/`.** A field removed from `axon::config::Config` breaks the
-  CLI build and nothing in axon's own tests notices, so build `cli/` after changing axon.
+  CLI build and nothing in axon's own tests notices, so build `cli/` after changing axon. It is also
+  why `cargo install --git .../devops tinybrains` cannot work — a standalone clone cannot resolve
+  `../../axon`. `cli/Dockerfile` works around it with a **named build context** (compose passes
+  `${AXON_DIR}`), which is what lets `docs`, `drill` and `ants-baselines` get the binary from an
+  image instead of a toolchain. The real fix is a git revision once axon is published.
 - **Schema changes live in `soma/migrations/` only.** `compose/db-init/` runs once per volume, so a
   pre-release rewrite strands existing dev stacks — it surfaces as `relation "clocks" does not exist`
   on every count tick. `scripts/dev/resync-dev-schema.sh` is the answer.

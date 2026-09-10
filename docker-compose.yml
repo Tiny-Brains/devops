@@ -273,6 +273,26 @@ services:
     volumes:
       - ants-pkg:/out
 
+  # The `tinybrains` binary, as an image. Not part of the stack -- `--profile tools` -- because
+  # nothing here runs it; it exists so `docs`, `drill` and `ants-baselines` can get the binary
+  # without a Rust toolchain, which today means `cargo install --path ../devops/cli` plus a checkout
+  # of axon two levels up.
+  #
+  #   docker compose --profile tools build cli-artifacts
+  #
+  # axon arrives as a named build context because cli/Cargo.toml names it `path = "../../axon"`,
+  # which is outside cli/'s build context. When axon is published and that becomes a git revision,
+  # this additional context goes away and `cargo install --git` starts working for everyone.
+  cli-artifacts:
+    profiles: ["tools"]
+    build:
+      context: ./cli
+      additional_contexts:
+        axon: ${AXON_DIR:-../axon}
+    image: ${CLI_REF:-tinybrains/cli:dev}
+    volumes:
+      - cli-bin:/out
+
   # One-shot: puts Kalam's package -- and with it the engine every replica plays -- where the
   # loader and the replicas read it.
   #
@@ -445,3 +465,5 @@ volumes:
   jodi-pkg:
   # Kalam's package, including the engine component every replica derives its digest from.
   kalam-pkg:
+  # The `tinybrains` binary, for `--profile tools`.
+  cli-bin:
