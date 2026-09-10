@@ -27,6 +27,14 @@ SRC="${1:-../ants-baselines}"
   exit 1
 }
 
+# The rating prior, read from the template `check/configs.sh` treats as the source of truth rather
+# than typed here. Two priors on one ladder is a real failure -- a baseline's first fold reads
+# [vars] while its seed row read something else -- and a third copy is a third thing to keep in step.
+SOMA_TMPL=compose/orion/soma.toml.tmpl
+PRIOR_MU=$(awk -F= '/^prior_mu[[:space:]]*=/{gsub(/ /,"",$2);print $2}' "$SOMA_TMPL")
+PRIOR_SIGMA=$(awk -F= '/^prior_sigma[[:space:]]*=/{gsub(/ /,"",$2);print $2}' "$SOMA_TMPL")
+[ -n "$PRIOR_MU" ] && [ -n "$PRIOR_SIGMA" ] || { echo "no prior_mu/prior_sigma in $SOMA_TMPL" >&2; exit 1; }
+
 DB_CONTAINER="${DB_CONTAINER:-tinybrains-db-1}"
 DB_USER="${DB_USER:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_USER)}"
 DB_NAME="${DB_NAME:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_DB)}"
@@ -112,7 +120,7 @@ python3 -c "import json,sys;print(json.dumps([json.loads(l) for l in sys.stdin i
   < "$TMP/rows.json" > "$TMP/rows-array.json"
 
 docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
-  -v rows="$(cat "$TMP/rows-array.json")" <<'SQL'
+  -v rows="$(cat "$TMP/rows-array.json")" -v mu="$PRIOR_MU" -v sigma="$PRIOR_SIGMA" <<'SQL'
 BEGIN;
 
 CREATE TEMP TABLE seeding ON COMMIT DROP AS
@@ -144,6 +152,43 @@ BEGIN
     END IF;
 END $$;
 
+-- A baseline this database has never seen: a version, its two ratings and their origin events, in
+-- exactly the shape compose/db-init/30-seed.sql writes on a fresh volume. Without this an existing
+-- stack could only ever have the baselines its volume was initialised with, and adding one would
+-- mean `docker compose down -v` -- which throws away every session and every match played.
+WITH missing AS (
+    SELECT s.*, u.id AS owner_id, g.id AS game_id, se.id AS season_id
+      FROM seeding s
+      JOIN users u ON u.handle = s.handle
+      CROSS JOIN games g
+      JOIN seasons se ON se.game_id = g.id AND se.closed_at IS NULL
+     WHERE g.slug = 'ants'
+       AND NOT EXISTS (SELECT 1 FROM models m WHERE m.owner_id = u.id AND m.game_id = g.id)
+), made AS (
+    INSERT INTO models (owner_id, game_id, season_id, version, repo, release_tag, commit_sha,
+                        status, weight_class, size_bytes, param_count, infer_us,
+                        weights_hash, adapter_hash, adapter, evaluator_digest)
+    SELECT owner_id, game_id, season_id, 1,
+           'Tiny-Brains/ants-baselines', 'v0-seeded', NULL,
+           'active', weight_class::ladder, size_bytes, param_count, infer_us,
+           weights_hash, adapter_hash, adapter, evaluator_digest
+      FROM missing
+    RETURNING id, weight_class
+), rated AS (
+    -- Two ladders each -- the class and open -- at the prior, so a baseline is rated by the matches
+    -- other people want rather than being an unrated void the fold silently drops.
+    INSERT INTO ratings (model_id, ladder, mu, sigma)
+    SELECT made.id, l.ladder, (:'mu')::float8, (:'sigma')::float8
+      FROM made CROSS JOIN LATERAL (VALUES (made.weight_class), ('open'::ladder)) AS l (ladder)
+    ON CONFLICT (model_id, ladder) DO NOTHING
+    RETURNING model_id, ladder, mu, sigma
+)
+-- seq 0, exactly as promotion writes one: no match and no `before`, as rating_events_seed_shape
+-- requires. Without it the first fold starts a chain with no origin.
+INSERT INTO rating_events (model_id, ladder, seq, mu_after, sigma_after)
+SELECT model_id, ladder, 0, mu, sigma FROM rated
+ON CONFLICT (model_id, ladder, seq) DO NOTHING;
+
 UPDATE models m
    SET weights_hash = s.weights_hash,
        adapter_hash = s.adapter_hash,
@@ -168,6 +213,10 @@ UPDATE match_seats s SET weights_hash = md.weights_hash, adapter_hash = md.adapt
  WHERE s.model_id = md.id AND mt.id = s.match_id AND mt.status = 'pending'
    AND (s.weights_hash IS DISTINCT FROM md.weights_hash
      OR s.adapter_hash IS DISTINCT FROM md.adapter_hash);
+
+-- Last, and inside the same transaction: the roster the pair clock reads has changed, and it must
+-- not see the new epoch before it can see the rows the epoch is about.
+UPDATE clocks SET epoch = epoch + 1, updated_at = now() WHERE key = 'roster';
 
 COMMIT;
 
