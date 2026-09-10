@@ -8,7 +8,11 @@ use crate::cmd::{axon_config, game_and_rest, open_game, reference_observations};
 use crate::store;
 
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (slug, files) = game_and_rest(args)?;
+    // `--json` before the shared parser sees it: `game_and_rest` refuses an unknown option, which
+    // is the behaviour every other command wants.
+    let json_out = args.iter().any(|a| a == "--json");
+    let args: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
+    let (slug, files) = game_and_rest(&args)?;
     if files.len() != 2 {
         return Err("which model?\n\n  tinybrains check out/model.onnx out/adapter.json".to_string());
     }
@@ -21,26 +25,47 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let weights = store::put(axon::store::Kind::Weights, &wb)?;
     let adapter = store::put(axon::store::Kind::Adapter, &ab)?;
 
-    println!("{} against {}'s reference set", files[0], game.slug);
-    println!("    weights          {weights}");
-    println!("    adapter          {adapter}");
-    println!();
+    if !json_out {
+        println!("{} against {}'s reference set", files[0], game.slug);
+        println!("    weights          {weights}");
+        println!("    adapter          {adapter}");
+        println!();
+    }
 
     // Admission mode: a replica answers NO_SUCH_CALL for both of these, deliberately.
     let axon = axon::server::Axon::new(axon_config(axon::config::Mode::Admission)?);
-    let ok = gate(
-        &axon,
-        &weights,
-        &adapter,
-        &observations,
-        game.budget("adapter_ops_max", 1_000_000),
-        // Stricter than admission, which allows more per observation than a turn does.
-        game.limit("turn_ms", 1000),
-    )?;
+    let budget = game.budget("adapter_ops_max", 1_000_000);
+    // Stricter than admission, which allows more per observation than a turn does.
+    let deadline = game.limit("turn_ms", 1000);
+    let (ok, ins, val) =
+        gate(&axon, &weights, &adapter, &observations, budget, deadline, json_out)?;
 
-    println!();
-    println!("This is not admission. It has no download allowlist and does not decide a size class,");
-    println!("so a pass here is necessary and not sufficient.");
+    if json_out {
+        // Machine-readable, for a repository that automates this -- exporting a model into a weight
+        // class is a loop of build, measure, resize, and parsing prose is how that loop breaks on a
+        // wording change. The two replies whole, plus what the caller would otherwise have to know
+        // to interpret them.
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": ok,
+                "game": game.slug,
+                "engine_digest": game.engine_digest,
+                "weights_hash": weights,
+                "adapter_hash": adapter,
+                "budget_ops": budget,
+                "deadline_ms": deadline,
+                "observations": observations.len(),
+                "inspect": ins,
+                "validate": val,
+            }))
+            .map_err(|e| e.to_string())?
+        );
+    } else {
+        println!();
+        println!("This is not admission. It has no download allowlist and does not decide a size class,");
+        println!("so a pass here is necessary and not sufficient.");
+    }
     if !ok {
         return Err("check failed".to_string());
     }
@@ -54,7 +79,8 @@ fn gate(
     observations: &[Value],
     budget_ops: u64,
     deadline_ms: u64,
-) -> Result<bool, String> {
+    quiet: bool,
+) -> Result<(bool, Value, Value), String> {
     let models = json!([{ "weights_hash": weights_hash, "adapter_hash": adapter_hash }]);
 
     // Hold it first: a model that will not load is a different failure from one that misbehaves.
@@ -84,13 +110,14 @@ fn gate(
             ))
         }
     };
-    report_graph(&ins);
-
-    println!();
-    println!(
-        "validate  ({} reference observations, budget {budget_ops}, deadline {deadline_ms} ms)",
-        observations.len()
-    );
+    if !quiet {
+        report_graph(&ins);
+        println!();
+        println!(
+            "validate  ({} reference observations, budget {budget_ops}, deadline {deadline_ms} ms)",
+            observations.len()
+        );
+    }
     let req: axon::api::ValidateRequest = serde_json::from_value(json!({
         "weights_hash": weights_hash,
         "adapter_hash": adapter_hash,
@@ -100,12 +127,16 @@ fn gate(
     }))
     .map_err(|e| e.to_string())?;
     let val = serde_json::to_value(axon.validate(req)).map_err(|e| e.to_string())?;
-    let ok = report_validation(&val, observations.len(), budget_ops);
+    let ok = if quiet {
+        val["ok"].as_bool().unwrap_or(false)
+    } else {
+        report_validation(&val, observations.len(), budget_ops)
+    };
 
     let unload: axon::api::UnloadRequest =
         serde_json::from_value(json!({ "models": models })).map_err(|e| e.to_string())?;
     axon.unload(unload);
-    Ok(ok)
+    Ok((ok, ins, val))
 }
 
 fn strings(v: &Value) -> Vec<&str> {
