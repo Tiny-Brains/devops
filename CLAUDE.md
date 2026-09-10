@@ -163,6 +163,14 @@ never lives here.
   When they do nothing errors — the ladder plays a component `ants` does not ship, with a viewer
   built against the other. `scripts/check/configs.sh` compares them; it has caught this before, from
   an edit that changed no behaviour at all.
+- **Restarting a `kalam-N` orphans its `axon-N`, and both keep reporting healthy.** The sidecar
+  joins the replica's network namespace (`network_mode: service:kalam-N`), and a `docker compose
+  restart` of the replica leaves the sidecar holding the OLD namespace. Its healthcheck curls its
+  own localhost, so it stays green; the replica gets connection refused at `127.0.0.1:9090` and
+  fails every row of every wave. **Recreate the pair together** — `docker compose up -d
+  --force-recreate kalam-N axon-N` — or recreate the sidecar after restarting the replica. Found on
+  10 September 2026 by restarting kalam-1 for the engine cutover and then wondering why the loader
+  had vanished.
 - **`axon` is a *path* dependency of `cli/`.** A field removed from `axon::config::Config` breaks the
   CLI build and nothing in axon's own tests notices, so build `cli/` after changing axon.
 - **Schema changes live in `soma/migrations/` only.** `compose/db-init/` runs once per volume, so a

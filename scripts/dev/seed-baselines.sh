@@ -202,10 +202,12 @@ UPDATE models m
 
 -- Any other model still carrying a hash axon cannot key: the hand-made candidates inserted to drive
 -- Jodi before anything could play. They get the smallest baseline, which is the cheapest to hold.
-UPDATE models SET weights_hash = s.weights_hash, adapter_hash = s.adapter_hash, adapter = s.adapter
+-- Qualified on both sides: `seeding` has a `weights_hash` too, and an UPDATE ... FROM makes the
+-- bare name ambiguous rather than defaulting to the target.
+UPDATE models m SET weights_hash = s.weights_hash, adapter_hash = s.adapter_hash, adapter = s.adapter
   FROM (SELECT * FROM seeding ORDER BY size_bytes LIMIT 1) s
- WHERE status IN ('testing', 'verified', 'active', 'superseded')
-   AND weights_hash !~ '^sha256:[0-9a-f]{64}$';
+ WHERE m.status IN ('testing', 'verified', 'active', 'superseded')
+   AND m.weights_hash !~ '^sha256:[0-9a-f]{64}$';
 
 -- Re-point pending rows only: anything already played keeps what it played, which is the record.
 UPDATE match_seats s SET weights_hash = md.weights_hash, adapter_hash = md.adapter_hash
