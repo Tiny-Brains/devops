@@ -284,6 +284,19 @@ orchestrator's secret store and sets only the public half.
 
 ## Status
 
+**Trained baselines are on the ladder, 10 September 2026.** Three artifacts from
+`Tiny-Brains/ants-baselines` are seeded, resident on both fleet replicas, and rated: a match between
+two of them ran 523 turns with zero strikes, uploaded its replay and folded into ratings. The
+roster in `30-seed.sql` is a `(handle, class)` list and `scripts/dev/seed-baselines.sh` reads the
+`metrics.json` each artifact carries, so a seeded baseline is indistinguishable from an admitted
+version. It can also create a baseline an existing volume lacks, which is what avoids `down -v`.
+
+**The engine was cut over** to `sha256:f17b51b6c92b` -- ants' observer-relative fix -- across both
+replicas, the game row and the live season. Two silent failures surfaced doing it and are now
+documented in CLAUDE.md: the loader visits only `KALAM_ORION_ADMINS`, so a fleet replica can come up
+READY with no wave channel; and restarting a `kalam-N` orphans its `axon-N` sidecar's network
+namespace while both keep reporting healthy.
+
 **Baselines infrastructure, 10 September 2026.** `tinybrains env` hosts the cartridge as a batched
 training environment over JSON Lines -- a pool of independent waves, refilled in place, with the
 per-turn score `finish` answers for a live match. Measured on an M2 Pro at **4,900 seat-turns/s**

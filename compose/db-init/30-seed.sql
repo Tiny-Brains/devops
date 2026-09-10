@@ -41,8 +41,12 @@ SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year'
 -- autocommit, so an on-commit table would be gone before the next statement could read it.
 CREATE TEMP TABLE baseline_roster (handle text, weight_class ladder);
 INSERT INTO baseline_roster VALUES
-    ('baseline-nano-bc',  'nano'),
-    ('baseline-micro-bc', 'micro');
+    ('baseline-nano-bc',       'nano'),
+    ('baseline-micro-bc',      'micro'),
+    -- The method column's control: same class, same data, same parameter count as micro-bc, and no
+    -- receptive field at all. It is a weak player on purpose and belongs on the ladder for the same
+    -- reason it exists -- the comparison is the artifact.
+    ('baseline-micro-percell', 'micro');
 
 INSERT INTO users (handle, role) SELECT handle, 'baseline' FROM baseline_roster
 ON CONFLICT (handle) DO NOTHING;
