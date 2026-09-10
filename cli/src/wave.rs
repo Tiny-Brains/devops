@@ -44,6 +44,13 @@ struct Ref {
     strikes: u64,
     forfeited: bool,
     script: Option<Vec<Value>>,
+    /// Per-seat inference cost, accumulated across the match from each row's `infer_us`. Held in
+    /// Rust rather than in the wire `ref` (see `to_json`): Kalam carries `strikes` in its ref only
+    /// because a workflow has nowhere else to keep it, and this loop has a struct.
+    infer_us_total: u64,
+    infer_us_max: u64,
+    /// Turns this seat was actually played, so a mean survives a seat that forfeited early.
+    seat_turns: u64,
 }
 
 impl Ref {
@@ -53,6 +60,9 @@ impl Ref {
             "weights_hash": self.weights_hash, "adapter_hash": self.adapter_hash,
             "strikes": self.strikes, "forfeited": self.forfeited,
         })
+        // Deliberately NOT the timing fields: this shape is Kalam's ref, and the loader echoes it
+        // verbatim onto every row. Widening it here would put the two implementations' wire
+        // payloads out of step for a number this side already has in memory.
     }
 }
 
@@ -64,7 +74,12 @@ pub struct Report {
     /// same as a play call -- a wave of eight matches asks for sixteen at once.
     pub seat_turns: u64,
     pub total_ops: u64,
-    pub total_play_ms: u64,
+    /// Summed `infer_us`, which is each row's share of its own group's inference. NOT summed
+    /// `elapsed_ms`: that is a latency running from a row entering the call to leaving it, so every
+    /// row reports roughly the whole call and a sum over 64 rows overstates the cost 64-fold.
+    pub total_infer_us: u64,
+    /// The most expensive single seat-turn, which is what a turn deadline is actually spent against.
+    pub max_infer_us: u64,
 }
 
 pub fn run(
@@ -112,6 +127,9 @@ pub fn run(
                 weights_hash: s.weights_hash.clone(),
                 adapter_hash: s.adapter_hash.clone(),
                 strikes: 0,
+                infer_us_total: 0,
+                infer_us_max: 0,
+                seat_turns: 0,
                 forfeited: false,
                 script: s.script.clone(),
             })
@@ -125,7 +143,8 @@ pub fn run(
         play_calls: 0,
         seat_turns: 0,
         total_ops: 0,
-        total_play_ms: 0,
+        total_infer_us: 0,
+        max_infer_us: 0,
     };
 
     for turn_index in 0.. {
@@ -184,9 +203,20 @@ pub fn run(
             for r in played["rows"].as_array().cloned().unwrap_or_default() {
                 report.seat_turns += 1;
                 report.total_ops += r["ops"].as_u64().unwrap_or(0);
-                report.total_play_ms += r["elapsed_ms"].as_u64().unwrap_or(0);
+                let us = r["infer_us"].as_u64().unwrap_or(0);
+                report.total_infer_us += us;
+                report.max_infer_us = report.max_infer_us.max(us);
                 let m = r["ref"]["m"].as_u64().unwrap_or(0) as usize;
                 let seat = r["ref"]["seat"].as_u64().unwrap_or(0);
+
+                // Before the action check below, which `continue`s on the common path: a seat's
+                // cost is charged whether or not the row produced a move.
+                if let Some(rf) = refs.iter_mut().find(|x| x.m == m && x.seat == seat) {
+                    rf.infer_us_total += us;
+                    rf.infer_us_max = rf.infer_us_max.max(us);
+                    rf.seat_turns += 1;
+                }
+
                 let action = r.get("action").cloned().unwrap_or(Value::Null);
 
                 // Rule 1: the explicit form. A seat that is simply absent plays the no-op.
@@ -237,6 +267,7 @@ pub fn run(
         // Rule 4: forfeits rank last, and not all at the same last.
         let mut ranks = engine_ranks.clone();
         let mut strikes = vec![0u64; row.seats.len()];
+        let mut timing = vec![(0u64, 0u64, 0u64); row.seats.len()];
         for rf in refs.iter().filter(|x| x.m == m) {
             let i = rf.seat as usize;
             if rf.forfeited && i < ranks.len() {
@@ -244,6 +275,9 @@ pub fn run(
             }
             if i < strikes.len() {
                 strikes[i] = rf.strikes;
+            }
+            if i < timing.len() {
+                timing[i] = (rf.infer_us_total, rf.infer_us_max, rf.seat_turns);
             }
         }
 
@@ -263,10 +297,20 @@ pub fn run(
             "turns": r["turns"],
             // Local only, and absent from Kalam's envelope, which joins it from `match_seats`: on a
             // laptop there is no row to join to, and an unattributable replay teaches nothing.
-            "seats": row.seats.iter().map(|s| json!({
-                "seat": s.seat, "label": s.label,
-                "weights_hash": s.weights_hash, "adapter_hash": s.adapter_hash,
-            })).collect::<Vec<_>>(),
+            // `infer_us_*` is what a model COST, not how long the call took: each row's share of
+            // its own group's inference, summed over the turns this seat played. Both seats of a
+            // match are rows of one call, on one machine, at one instant -- so within a replay these
+            // numbers are directly comparable, which is the only honest cost comparison there is.
+            // `conform` does not read `seats`, so carrying a non-reproducible number here cannot
+            // make a deterministic replay fail to conform.
+            "seats": row.seats.iter().enumerate().map(|(i, s)| {
+                let (total, max, turns) = timing.get(i).copied().unwrap_or((0, 0, 0));
+                json!({
+                    "seat": s.seat, "label": s.label,
+                    "weights_hash": s.weights_hash, "adapter_hash": s.adapter_hash,
+                    "infer_us_total": total, "infer_us_max": max, "seat_turns": turns,
+                })
+            }).collect::<Vec<_>>(),
             "deltas": deltas.get(&m).cloned().unwrap_or_default(),
         });
 

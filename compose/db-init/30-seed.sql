@@ -43,10 +43,10 @@ ON CONFLICT (handle) DO NOTHING;
 -- the hash agree, and there is no honest text yet. All three are 'nano', so a candidate in a
 -- larger class matches no baseline on class and falls through to the "any baseline" arm.
 INSERT INTO models (owner_id, game_id, season_id, version, repo, release_tag, commit_sha, status,
-                    weight_class, size_bytes, param_count, flops_estimate,
+                    weight_class, size_bytes, param_count, infer_us,
                     weights_hash, adapter_hash, evaluator_digest)
 SELECT u.id, g.id, s.id, 1,
-       'tinybrains/ants-baselines', 'v0-placeholder', NULL, 'active',
+       'Tiny-Brains/ants-baselines', 'v0-placeholder', NULL, 'active',
        'nano', 0, 0, 0,
        'sha256:placeholder-' || u.handle,
        'sha256:placeholder-' || u.handle || '-adapter',

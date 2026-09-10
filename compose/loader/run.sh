@@ -128,13 +128,15 @@ SQL
   fi
 
   echo "==> registering the cartridge"
-  # The manifest is the copy vendored beside the component, so the budgets admission judges by are
-  # the ones the loaded engine was built with. The worst case must be in the reference set or the
+  # The manifest is the copy vendored beside the component, so the budget admission judges by is
+  # the one the loaded engine was built with. The worst case must be in the reference set or the
   # gate is theatre; until ants publishes one, axon's worst-case fixture stands in.
   manifest="${CARTRIDGE_MANIFEST:-$PKG/kalam/plugins/tb-ants/cartridge.json}"
   [ -r "$manifest" ] || { echo "no cartridge manifest at $manifest -- run kalam/scripts/vendor-engine.sh" >&2; exit 1; }
-  jq -e '.budgets.adapter_ops_max and (.budgets.flop_caps | length > 0)' "$manifest" > /dev/null \
-    || { echo "$manifest declares no budgets.adapter_ops_max / budgets.flop_caps" >&2; exit 1; }
+  # adapter_ops_max only: there is no compute budget since decision 46. A manifest still declaring
+  # flop_caps is stale rather than wrong, and is ignored.
+  jq -e '.budgets.adapter_ops_max' "$manifest" > /dev/null \
+    || { echo "$manifest declares no budgets.adapter_ops_max" >&2; exit 1; }
   if [ -r "$PKG/ants/reference/observations.json" ]; then
     # The file is an OBJECT and the column is an ARRAY, so take the array out rather than storing
     # the envelope.

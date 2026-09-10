@@ -284,6 +284,21 @@ orchestrator's secret store and sets only the public half.
 
 ## Status
 
+**Decision 46, 10 September 2026 — no compute cap**, recorded in `docs/decisions.md` with the
+measurements that argued it. The loader's manifest gate no longer requires `budgets.flop_caps`;
+`30-seed.sql` writes `infer_us` and names the baselines repo `Tiny-Brains/ants-baselines` (the org
+was wrong, and admission pastes that string into a URL). `tinybrains` reports attributed inference
+time — mean and worst per seat-turn, against the deadline divided by the seats in a call — where it
+used to sum `elapsed_ms` and overstate the cost by roughly the wave size, and **the replay envelope's
+`seats` array now records `infer_us_total`, `infer_us_max` and `seat_turns` per seat**, so a replay
+carries what each model cost and not only what it scored. `conform` reads an explicit field
+allowlist that excludes `seats`, so a non-reproducible number there cannot fail a determinism check.
+Two seats sharing one `weights_hash` batch into one group and are charged an equal share of it,
+which is why the committed fixtures — one Micro trunk read two ways — report the same cost. **A stale vendored engine
+was found and fixed**: `kalam/plugins/tb-ants/tb-ants.wasm` was `254549b4`, `ants` ships `1555f081`,
+so `check/configs.sh` was failing on the committed tree and local play and the fleet were running
+different engines. Re-vendored and re-signed.
+
 **10 September 2026.** Compose defines the API/clock split, sidecars, shared storage, and second replica. `scripts/check/configs.sh` passes consistency checks
 and parses both templates with the pinned Orion image. A fresh full-stack startup,
 live OAuth, real R2, mixed-engine rollout, cloud deployment, autoscaling, TLS, admin authentication,

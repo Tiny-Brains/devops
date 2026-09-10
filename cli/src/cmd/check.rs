@@ -175,6 +175,15 @@ fn report_validation(val: &Value, observations: usize, budget_ops: u64) -> bool 
         if pct > 80 {
             println!("    little headroom -- a busier board than any of these would exceed it");
         }
+        // Reported, never a gate: there is no compute cap (devops decision 46), and wall clock
+        // belongs to whichever machine ran it. It is here because the TURN DEADLINE is what a
+        // graph too expensive to play runs into, and this is the only local sight of it.
+        let us = val["infer_us_max"].as_u64().unwrap_or(0);
+        println!(
+            "    slowest graph    {:.2} ms of inference  (measured here, not a threshold: no \
+             class caps compute)",
+            us as f64 / 1000.0
+        );
         return true;
     }
     println!("    FAILED  {}", val["reason"].as_str().unwrap_or("unstated"));

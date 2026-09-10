@@ -156,13 +156,14 @@ Numbered as the build numbered them. Each names the repository it now lives in.
 | 6 | The op budget number | **1,000,000**, measured rather than argued: a reference six-plane Ants adapter costs 197,272 against a real worst-case observation |
 | 34 | The resident call | `GET /resident`, advisory, weights hashes, `loading` excluded |
 | — | A tensor is opaque to a program | the encoding question disappears with the encoding |
-| — | The operator set is the platform's, and has no arithmetic | computation is priced by the FLOP cap, marshalling by the op count, knowledge by `S`. Three budgets, three axes, no overlap |
+| — | The operator set is the platform's, and has no arithmetic | marshalling is priced by the op count, knowledge by `S`. The third axis — computation — was the FLOP cap, retired by 46; the no-arithmetic rule survives on the op count's own cost rule, which prices data and not multiplies |
 | — | The count is a run-time count | the static bound stays rejected, and the consequence — an adapter can fail at play having passed admission — is accepted and made visible as a strike |
 | — | `dialect_version` and `evaluator_digest` are different things | the digest hashes the dialect, not the binary, so the re-validation sweep fires on meaning and not on releases |
 | — | `/load` takes hashes; only admission takes URLs | the store key *is* the hash, so resolving it is content addressing, not platform knowledge |
 | — | The mirror happens inside admission's `/load` | there is no state where a version is admitted and its bytes are not in the store |
 | — | `fault: model \| loader` on every refusal | Kalam branches on a field, not a vocabulary, so a new reason word costs no workflow change |
-| — | FLOPs are measured at the shapes the adapter actually produced | a declared input shape is a claim; what is fed is a fact |
+| — | The graph is timed at the shapes the adapter actually produced | a declared input shape is a claim; what is fed is a fact |
+| **46** | **There is no compute cap. `turn_ms` is the fairness control** | measured 10 September 2026 and recorded in axon/docs/design.md §10.2: `2·params·spatial` was shadowed by `S` below and by the deadline above, decided something only for a quantized Nano or Micro entry, and could not catch the few-bytes-much-compute exploit it was introduced for, because that exploit minimises `params`. Prerequisite, landed with it: the loader gives each row its own share of `deadline_ms`, so a slow graph times *itself* out instead of striking the seats behind it. `models.infer_us` replaces `flops_estimate` — reported to the competitor, gating nothing |
 | — | The adapter's raw cap | 4 MiB |
 
 ### Deployment — [`devops`](https://github.com/Tiny-Brains/devops)
