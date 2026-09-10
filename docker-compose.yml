@@ -394,12 +394,18 @@ services:
 
   web:
     build:
-      context: ../web
+      context: ${WEB_DIR:-../web}
+      args:
+        # The replay viewer, taken from the cartridge's own image rather than from a checkout beside
+        # web/. The SAME ref the ladder plays, so the viewer re-simulates with the component that
+        # recorded the match -- a viewer built against a different engine draws a plausible match
+        # that never happened, and nothing errors.
+        ANTS_REF: ${ANTS_REF:-tinybrains/ants:dev}
     volumes:
       # The book, rendered. A separate repository that web/'s build context cannot reach, so
       # locally it is mounted and a deployment bakes it in at the same path. Run `mdbook build` in
       # docs/ first; without it /docs answers 404 and nothing else is affected.
-      - ../docs/book:/usr/share/nginx/html/docs:ro
+      - ${DOCS_DIR:-../docs}/book:/usr/share/nginx/html/docs:ro
     depends_on:
       soma:
         condition: service_healthy
