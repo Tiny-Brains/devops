@@ -1,24 +1,35 @@
 #!/usr/bin/env bash
-# Give the three seeded baselines real weights and adapters, and put the bytes in the store.
+# Point the seeded baselines at the trained artifacts, and put the bytes in the store.
 #
-#   scripts/dev/seed-baselines.sh
+#   scripts/dev/seed-baselines.sh [path-to-ants-baselines]     # default ../ants-baselines
 #
-# compose/db-init/30-seed.sql creates three baselines naming PLACEHOLDER hashes, and axon refuses a
-# hash that is not 64 hex characters -- that refusal is what stops a hash from being a path. So the
-# first wave against seeded data fails every row at the residency barrier, correctly and uselessly.
+# compose/db-init/30-seed.sql creates one baseline per artifact naming PLACEHOLDER hashes, because a
+# volume initialises long before any model exists. Axon refuses a hash that is not 64 hex characters
+# -- that refusal is what stops a hash from being a path -- so until this runs, every wave seating a
+# baseline fails at the residency barrier, correctly and uselessly.
 #
-# This stands in for admission with the two model-and-adapter pairs axon's own tests use: real ONNX
-# graphs and real dialect programs, randomly initialised, so they play badly. A ladder needs an
-# opponent before it needs a good one.
+# WHAT CHANGED, 10 SEPTEMBER 2026. This used to dump axon's own test fixtures: real ONNX graphs with
+# random weights, which hold every ant on every turn, so every trial ended `idle_food` and beating
+# one proved that an entry emitted valid actions and nothing else. It now reads TRAINED artifacts
+# from ants-baselines, each of which carries the `metrics.json` that admission would otherwise have
+# produced -- so a seeded baseline is indistinguishable from an admitted version, which is the point.
 #
-# Delete this script the day admission can do it.
+# Delete this script the day admission can do it: these are ordinary submissions from an ordinary
+# repository, and the only reason they are seeded rather than submitted is that a baseline has no
+# trial opponent until a baseline exists.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+
+SRC="${1:-../ants-baselines}"
+[ -d "$SRC/models" ] || {
+  echo "no $SRC/models -- clone Tiny-Brains/ants-baselines beside this repository, or pass its path" >&2
+  echo "  its README has the two commands that build the artifacts" >&2
+  exit 1
+}
 
 DB_CONTAINER="${DB_CONTAINER:-tinybrains-db-1}"
 DB_USER="${DB_USER:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_USER)}"
 DB_NAME="${DB_NAME:-$(docker exec "$DB_CONTAINER" printenv POSTGRES_DB)}"
-AXON_SRC="${AXON_SRC:-../axon}"
 
 # A signed PUT to the one bucket the admission instance and every replica share. Signed by curl
 # rather than by axon: a seeder that depends on the code under test cannot tell you the store is
@@ -29,46 +40,125 @@ S3_REGION="${R2_REGION:-us-east-1}"
 S3_KEY="${R2_ACCESS_KEY:-tinybrains}"
 S3_SECRET="${R2_SECRET_KEY:-tinybrains-dev-secret}"
 
+put() {   # put <file> <kind>   -- keyed by the digest metrics.json already recorded
+  local file="$1" hash="$2" key
+  key="$(printf '%s' "$hash" | sed 's|^sha256:|/sha256/|')"
+  key="${3}${key}"
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:$S3_REGION:s3" \
+      --user "$S3_KEY:$S3_SECRET" -X PUT --data-binary "@$file" "$S3_ENDPOINT/$S3_BUCKET/$key")
+  case "$code" in
+    200) echo "    $key" ;;
+    *) echo "PUT $key answered HTTP $code -- is the bucket there? \`docker compose run --rm loader setup\`" >&2; exit 1 ;;
+  esac
+}
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+: > "$TMP/rows.json"
 
-echo "==> dumping the reference fixtures"
-( cd "$AXON_SRC" && cargo run --quiet --release --example dump-fixtures -- "$TMP" ) > "$TMP/out.json"
-cat "$TMP/out.json"
+echo "==> reading $SRC/models"
+found=0
+for dir in "$SRC"/models/*/; do
+  name=$(basename "$dir")
+  [ -f "$dir/metrics.json" ] || { echo "    $name has no metrics.json -- run its export" >&2; continue; }
+  for f in model.onnx adapter.json; do
+    [ -f "$dir/$f" ] || { echo "    $name has no $f" >&2; exit 1; }
+  done
 
-echo "==> putting them in $S3_BUCKET at $S3_ENDPOINT"
-# dump-fixtures writes the store's own `<kind>/sha256/<hex>` layout, so each path under $TMP IS its
-# key. A replica has no upload endpoint on purpose: bytes reach it only by already being in the
-# store.
-( cd "$TMP" && find . -type f -path './*/sha256/*' | sed 's|^\./||' ) | while read -r k; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:$S3_REGION:s3" \
-      --user "$S3_KEY:$S3_SECRET" -X PUT --data-binary "@$TMP/$k" "$S3_ENDPOINT/$S3_BUCKET/$k")
-  case "$code" in
-    200) echo "    $k" ;;
-    *) echo "PUT $k answered HTTP $code -- is the bucket there? \`docker compose run --rm loader setup\`" >&2; exit 1 ;;
-  esac
+  wh=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['weights_hash'])" "$dir/metrics.json")
+  ah=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['adapter_hash'])" "$dir/metrics.json")
+
+  # The hashes in metrics.json came from `tinybrains check`, which hashed these exact files. Verify
+  # rather than trust: a stale metrics.json beside a rebuilt model is the one way this goes wrong,
+  # and it would seed a row naming bytes the store does not hold.
+  for pair in "model.onnx:$wh" "adapter.json:$ah"; do
+    f=${pair%%:*}; want=${pair#*:}
+    got="sha256:$(shasum -a 256 "$dir/$f" | cut -d' ' -f1)"
+    [ "$got" = "$want" ] || {
+      echo "    $name/$f hashes to $got but metrics.json says $want -- re-run the export" >&2
+      exit 1
+    }
+  done
+
+  echo "  $name"
+  put "$dir/model.onnx"   "$wh" weights
+  put "$dir/adapter.json" "$ah" adapters   # plural: axon's Kind::Adapter prefix
+
+  python3 - "$dir" "$name" >> "$TMP/rows.json" <<'PY'
+import json, sys, pathlib
+d, name = pathlib.Path(sys.argv[1]), sys.argv[2]
+m = json.load(open(d / "metrics.json"))
+print(json.dumps({
+    "handle": f"baseline-{name}",
+    "weight_class": m["class"],
+    "weights_hash": m["weights_hash"],
+    "adapter_hash": m["adapter_hash"],
+    "adapter": (d / "adapter.json").read_text(),
+    "size_bytes": m["size_metric_bytes"],
+    "param_count": m["params"],
+    "infer_us": m["infer_us_max"],
+    "evaluator_digest": m["evaluator_digest"],
+}))
+PY
+  found=$((found + 1))
 done
-
-RAGGED_W=$(python3 -c "import json;print(json.load(open('$TMP/out.json'))['ragged']['weights'])")
-RAGGED_A=$(python3 -c "import json;print(json.load(open('$TMP/out.json'))['ragged']['adapter'])")
-DENSE_W=$(python3 -c "import json;print(json.load(open('$TMP/out.json'))['dense']['weights'])")
-DENSE_A=$(python3 -c "import json;print(json.load(open('$TMP/out.json'))['dense']['adapter'])")
+[ "$found" -gt 0 ] || { echo "no exported models in $SRC/models" >&2; exit 1; }
 
 echo "==> pointing the baselines at them"
-# Two distinct pairs across three baselines: a wave whose seats all name ONE model would never
-# exercise the claim's affinity fill or the loader holding more than one graph.
+# One statement over a jsonb array rather than a loop of UPDATEs: every baseline moves together or
+# none does, which matters because pair may be inserting trials against them while this runs.
+python3 -c "import json,sys;print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))" \
+  < "$TMP/rows.json" > "$TMP/rows-array.json"
+
 docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
-  -v rw="$RAGGED_W" -v ra="$RAGGED_A" -v dw="$DENSE_W" -v da="$DENSE_A" <<'SQL'
+  -v rows="$(cat "$TMP/rows-array.json")" <<'SQL'
 BEGIN;
-UPDATE models m SET weights_hash = :'rw', adapter_hash = :'ra'
-  FROM users u WHERE u.id = m.owner_id AND u.role = 'baseline'
-   AND u.handle IN ('baseline-random', 'baseline-greedy');
-UPDATE models m SET weights_hash = :'dw', adapter_hash = :'da'
-  FROM users u WHERE u.id = m.owner_id AND u.role = 'baseline'
-   AND u.handle = 'baseline-strong';
--- Any other model still carrying a hash axon cannot key: the hand-made candidates inserted to
--- drive Jodi before anything could play.
-UPDATE models SET weights_hash = :'rw', adapter_hash = :'ra'
+
+CREATE TEMP TABLE seeding ON COMMIT DROP AS
+SELECT * FROM jsonb_to_recordset((:'rows')::jsonb)
+     AS r (handle text, weight_class text, weights_hash text, adapter_hash text, adapter text,
+           size_bytes bigint, param_count bigint, infer_us bigint, evaluator_digest text);
+
+-- A baseline is a competitor: a user, so it can be told apart on a leaderboard that shows an entry
+-- as its owner's handle. github_id stays null; they never sign in.
+INSERT INTO users (handle, role)
+SELECT handle, 'baseline' FROM seeding
+ON CONFLICT (handle) DO NOTHING;
+
+-- THE CLASS IS CHECKED, NOT SET. `ratings` and `rating_events` are keyed by ladder, and a ladder
+-- IS a weight class, so moving a baseline between classes here would strand every rating row it
+-- already has and leave it rated on a ladder it no longer plays. 30-seed.sql fixes the class from
+-- the handle; if an artifact has been retrained into a different class it needs a new handle, which
+-- is the same rule a competitor lives under.
+DO $$
+DECLARE bad text;
+BEGIN
+    SELECT string_agg(format('%s is seeded as %s but its artifact measures %s',
+                             s.handle, m.weight_class, s.weight_class), E'\n  ')
+      INTO bad
+      FROM seeding s JOIN users u ON u.handle = s.handle JOIN models m ON m.owner_id = u.id
+     WHERE m.weight_class IS DISTINCT FROM s.weight_class::ladder;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION E'a baseline changed weight class:\n  %\n\nRatings are keyed by ladder, so this needs a new handle rather than an update.', bad;
+    END IF;
+END $$;
+
+UPDATE models m
+   SET weights_hash = s.weights_hash,
+       adapter_hash = s.adapter_hash,
+       adapter      = s.adapter,
+       size_bytes   = s.size_bytes,
+       param_count  = s.param_count,
+       infer_us     = s.infer_us,
+       evaluator_digest = s.evaluator_digest
+  FROM seeding s, users u
+ WHERE u.handle = s.handle AND m.owner_id = u.id;
+
+-- Any other model still carrying a hash axon cannot key: the hand-made candidates inserted to drive
+-- Jodi before anything could play. They get the smallest baseline, which is the cheapest to hold.
+UPDATE models SET weights_hash = s.weights_hash, adapter_hash = s.adapter_hash, adapter = s.adapter
+  FROM (SELECT * FROM seeding ORDER BY size_bytes LIMIT 1) s
  WHERE status IN ('testing', 'verified', 'active', 'superseded')
    AND weights_hash !~ '^sha256:[0-9a-f]{64}$';
 
@@ -78,8 +168,11 @@ UPDATE match_seats s SET weights_hash = md.weights_hash, adapter_hash = md.adapt
  WHERE s.model_id = md.id AND mt.id = s.match_id AND mt.status = 'pending'
    AND (s.weights_hash IS DISTINCT FROM md.weights_hash
      OR s.adapter_hash IS DISTINCT FROM md.adapter_hash);
+
 COMMIT;
-SELECT u.handle, m.weights_hash, m.adapter_hash
+
+SELECT u.handle, m.weight_class, m.size_bytes, m.param_count, m.infer_us,
+       left(m.weights_hash, 18) AS weights
   FROM models m JOIN users u ON u.id = m.owner_id
- WHERE u.role = 'baseline' ORDER BY u.handle;
+ WHERE u.role = 'baseline' ORDER BY m.size_bytes;
 SQL
