@@ -97,6 +97,9 @@ x-axon-env: &axon-env
 services:
   db:
     image: postgres:16-alpine
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-soma}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -105,10 +108,7 @@ services:
       - db-data:/var/lib/postgresql/data
       # Once only, on first initialisation of the volume, in filename order. Re-running them means
       # `docker compose down -v`; everything after that is the loader's, and idempotent.
-      - ./compose/db-init/10-orion-state.sh:/docker-entrypoint-initdb.d/10-orion-state.sh:ro
-      - ../soma/migrations/0001_init.sql:/docker-entrypoint-initdb.d/20-soma-schema.sql:ro
-      - ../soma/migrations/0002_sessions.sql:/docker-entrypoint-initdb.d/25-soma-sessions.sql:ro
-      - ./compose/db-init/30-seed.sql:/docker-entrypoint-initdb.d/30-seed.sql:ro
+      - db-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soma} -d ${POSTGRES_DB:-soma}"]
       interval: 5s
@@ -293,6 +293,48 @@ services:
     volumes:
       - cli-bin:/out
 
+  # One-shot: puts Soma's package where the loader reads it.
+  #
+  # Soma generates nothing -- every channel, workflow, connector and migration is authored -- so
+  # this is not about build output. It is the last bind mount: `../soma` and its two migration files
+  # were the remaining reason a checkout of a sibling had to exist for the stack to come up.
+  soma-artifacts:
+    build:
+      context: ${SOMA_DIR:-../soma}
+    image: ${SOMA_REF:-tinybrains/soma:dev}
+    volumes:
+      - soma-pkg:/out
+
+  # One-shot: assembles Postgres's init directory from two owners.
+  #
+  # WHY THIS IS ASSEMBLED RATHER THAN MOUNTED. These four scripts run ONCE, in filename order, on
+  # first initialisation of the db volume, and the order is the whole point: orion's state database
+  # before the schema, the schema before the seed. Two of them are ours and two are Soma's
+  # migrations, and the NUMBERS THAT INTERLEAVE THEM ARE OURS, not Soma's -- which is why its image
+  # carries `migrations/` under its own names and this step renames them into place.
+  #
+  # Re-running them means `docker compose down -v`. On an existing volume Postgres skips the
+  # directory entirely, so editing anything here changes nothing until the volume is recreated.
+  db-init:
+    image: ${SOMA_REF:-tinybrains/soma:dev}
+    depends_on:
+      soma-artifacts:
+        condition: service_completed_successfully
+    volumes:
+      - db-init:/out
+      - ./compose/db-init:/ours:ro
+      - soma-pkg:/soma:ro
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        cp /ours/10-orion-state.sh        /out/10-orion-state.sh
+        cp /soma/migrations/0001_init.sql /out/20-soma-schema.sql
+        cp /soma/migrations/0002_sessions.sql /out/25-soma-sessions.sql
+        cp /ours/30-seed.sql              /out/30-seed.sql
+        ls -1 /out
+
   # One-shot: puts Kalam's package -- and with it the engine every replica plays -- where the
   # loader and the replicas read it.
   #
@@ -344,6 +386,8 @@ services:
         condition: service_completed_successfully
       kalam-artifacts:
         condition: service_completed_successfully
+      soma-artifacts:
+        condition: service_completed_successfully
       soma:
         condition: service_healthy
       kalam-1:
@@ -357,7 +401,7 @@ services:
       minio:
         condition: service_healthy
     volumes:
-      - ${SOMA_DIR:-../soma}:/pkg/soma:ro
+      - soma-pkg:/pkg/soma:ro
       - jodi-pkg:/pkg/jodi:ro
       - kalam-pkg:/pkg/kalam:ro
       # The cartridge's build output, from the volume `ants-artifacts` populates -- NOT from a
@@ -465,5 +509,9 @@ volumes:
   jodi-pkg:
   # Kalam's package, including the engine component every replica derives its digest from.
   kalam-pkg:
+  # Soma's package: the public API's channels and workflows, its connectors, and the migrations.
+  soma-pkg:
+  # Postgres's init directory, assembled from ours and Soma's. Read once, on first init.
+  db-init:
   # The `tinybrains` binary, for `--profile tools`.
   cli-bin:

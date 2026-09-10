@@ -11,9 +11,11 @@ know nothing about the topology — **this repo decides how many servers there a
 goes in which.**
 
 It is one of ten repos checked out side by side under `tinybrains/`; see `../CLAUDE.md` for the
-platform-wide map. Compose still reaches siblings for the packages it mounts, but every path is now
-a variable (`SOMA_DIR`, `JODI_DIR`, `KALAM_DIR`, `AXON_DIR`) rather than a hard-coded `../`, and the
-cartridge no longer comes from a checkout at all — see the `ants-artifacts` note below.
+platform-wide map. **`docker-compose.yml` alone needs no checkout of any of them** — every package
+arrives as an artifact image and is copied into a volume. The sibling directories are still the
+default source of those images (`SOMA_DIR`, `JODI_DIR`, `KALAM_DIR`, `AXON_DIR`, `WEB_DIR`,
+`DOCS_DIR`), and `<PKG>_REF` pins a published tag instead. To edit a package in place, add
+`-f docker-compose.dev.yml`, which binds its source back over the volume.
 
 `docs/architecture.md` is the system map, `docs/deployment.md` the topology and deploy order,
 `docs/decisions.md` the numbered decisions referenced throughout, `docs/orion-notes.md` the Orion
@@ -25,7 +27,8 @@ cartridge no longer comes from a checkout at all — see the `ants-artifacts` no
 ```sh
 # the stack (needs .env, see .env.example)
 docker compose up --build -d                     # http://localhost:5173, Orion admin 8080, orion-ui 8081
-docker compose run --rm loader                   # reload packages after editing soma/jodi/kalam
+docker compose run --rm loader                   # reload packages after rebuilding soma/jodi/kalam
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d   # edit those packages in place
 docker compose --profile fleet up --build -d     # adds kalam-2 + axon-2 (set KALAM_ORION_ADMINS first)
 docker compose logs loader                       # the one place a failed package load is visible
 docker compose down -v                           # the only way to re-run compose/db-init/
@@ -86,12 +89,23 @@ replicas over one shared state and the `wave` singleton becomes fleet-wide, so e
 ever plays while the other N-1 poll a held row looking perfectly healthy. Kalam's fence is the
 leased claim on `matches`, not Orion's, so nothing is lost.
 
-**Packages come from images, not checkouts — three of four converted.** `ants`, `jodi` and `kalam`
-ship artifact images; `<pkg>-artifacts` one-shots copy them into `ants-pkg`, `jodi-pkg` and
-`kalam-pkg`, and the loader — and every replica — mounts those where they used to mount the sibling
-directories. Only `soma` is still a bind mount, and it commits no build output. `JODI_REF` and
-`KALAM_REF` work exactly as `ANTS_REF` does: unset they build from `<PKG>_DIR`, set to a tag they
-pin.
+**Every package comes from an image, and there are no bind mounts left.** `ants`, `soma`, `jodi`
+and `kalam` each ship an artifact image; `<pkg>-artifacts` one-shots copy them into `<pkg>-pkg`
+volumes, and the loader — and every replica — mounts those. `<PKG>_REF` picks what runs: unset it
+builds from `<PKG>_DIR`, set to a tag it pins.
+
+**Postgres's init directory is assembled, not mounted.** `db-init` is a one-shot that copies two of
+our scripts and two of Soma's migrations into a volume under the numbers that fix their order —
+orion's state database, then the schema, then the sessions table, then the seed. The numbers are
+ours and the migrations are Soma's, which is why its image carries `migrations/` under its own names
+and the renaming happens here. It still runs **once per db volume**: on an existing volume Postgres
+skips the directory entirely, so editing any of it changes nothing until `docker compose down -v`.
+
+**`docker-compose.dev.yml` is how you edit a package in place.** It binds each checkout back over
+its volume — the old loop, now opt-in rather than the only option. It deliberately does not override
+`kalam/plugins/`, which holds the engine: that comes from the cartridge's image and must stay the
+one the ladder's digest was declared from. After a plugin rebuild under the overlay, re-run
+`scripts/setup/sign-plugins.sh`, because the bytes the loader sends have changed.
 
 **Plugin signatures live in `keys/signatures/`, not beside the components.** A signature belongs to
 whoever holds the trust key, and a package that ships as an immutable image several deployments can

@@ -1,0 +1,46 @@
+# Bind each package's SOURCE back over the volume its artifact image populated.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm loader
+#
+# WHY THIS EXISTS, AND WHY IT IS THE OVERRIDE RATHER THAN THE DEFAULT. Every package used to be a
+# bind mount, so the only way to run the stack was with all ten repositories in one parent directory
+# -- hermetic was not a thing you could ask for. It is the other way round now: `docker-compose.yml`
+# alone needs no checkout of anything, and this file is how you get the old loop back for the
+# package you are actually editing.
+#
+# WHAT IT DOES AND DOES NOT REACH. Soma, Jodi and Kalam are declarations -- JSON that an
+# orion-server reads -- so a bind mount is a live edit and `docker compose run --rm loader` picks it
+# up. What is NOT live is anything the image BUILDS:
+#
+#   jodi    channels/ and workflows/ come from scripts/gen-jodi.py; run it before loading
+#   kalam   the same, scripts/gen-kalam.py -- and its plugins/ hold the ENGINE, which the image
+#           takes from the cartridge's image. Overriding kalam wholesale would hide it, so this
+#           file mounts only the parts a person edits and leaves plugins/ to the volume
+#   jodi    plugins/*.wasm are Rust; `plugins/build.sh <name>` first, then re-sign
+#
+# After a plugin rebuild, re-run scripts/setup/sign-plugins.sh -- it reads components out of the
+# volumes, and a bind mount over a package changes which bytes the loader sends.
+
+services:
+  soma-artifacts:
+    volumes:
+      - ${SOMA_DIR:-../soma}:/src:ro
+      - soma-pkg:/out
+    command: sh -c "cp -a /src/channels /src/workflows /src/connectors /src/migrations /out/ && mkdir -p /out/scripts && cp /src/scripts/load-package.sh /out/scripts/"
+
+  jodi-artifacts:
+    volumes:
+      - ${JODI_DIR:-../jodi}:/src:ro
+      - jodi-pkg:/out
+    # channels/ and workflows/ are generated: run scripts/gen-jodi.py in the checkout first, or this
+    # copies whatever was there last. plugins/ likewise -- plugins/build.sh writes them.
+    command: sh -c "cp -a /src/channels /src/workflows /src/connectors /src/plugins /out/ && mkdir -p /out/scripts && cp /src/scripts/load-package.sh /out/scripts/"
+
+  kalam-artifacts:
+    volumes:
+      - ${KALAM_DIR:-../kalam}:/src:ro
+      - kalam-pkg:/out
+    # plugins/ is deliberately NOT copied: it holds the engine, which comes from the cartridge's
+    # image and must stay the one the ladder's digest was declared from. Everything else is yours.
+    command: sh -c "cp -a /src/channels /src/workflows /src/connectors /out/ && mkdir -p /out/scripts && cp /src/scripts/load-package.sh /out/scripts/"
