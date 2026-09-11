@@ -192,8 +192,8 @@ WITH missing AS (
       FROM entry JOIN missing ON missing.owner_id = entry.owner_id
     RETURNING id, weight_class
 ), rated AS (
-    -- Two ladders each -- the class and open -- at the prior, so a baseline is rated by the matches
-    -- other people want rather than being an unrated void the fold silently drops.
+    -- Two ladders each -- the class and open -- at the prior, so a baseline starts in placement like
+    -- any version (decision 28) rather than being an unrated void the fold silently drops.
     INSERT INTO ratings (version_id, ladder, mu, sigma)
     SELECT made.id, l.ladder, (:'mu')::float8, (:'sigma')::float8
       FROM made CROSS JOIN LATERAL (VALUES (made.weight_class), ('open'::ladder)) AS l (ladder)

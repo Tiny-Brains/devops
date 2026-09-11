@@ -108,8 +108,8 @@ SELECT e.id, e.game_id, s.id, 1,
   JOIN seasons s ON s.game_id = g.id AND s.closed_at IS NULL      -- the live season: season 1
  WHERE NOT EXISTS (SELECT 1 FROM model_versions v WHERE v.model_id = e.id);
 
--- Two rating rows each -- class ladder and open -- at the prior, so a baseline is rated by the
--- matches other people want rather than being an unrated void the fold silently drops.
+-- Two rating rows each -- class ladder and open -- at the prior, so a baseline starts in placement
+-- like any version (decision 28) rather than being an unrated void the fold silently drops.
 -- These MUST stay equal to [vars] prior_mu / prior_sigma; check/configs.sh asserts it.
 INSERT INTO ratings (version_id, ladder, mu, sigma)
 SELECT v.id, l.ladder, 25.0, 8.333333333333334

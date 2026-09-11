@@ -285,6 +285,11 @@ orchestrator's secret store and sets only the public half.
 
 ## Status
 
+**Baselines are ordinary entries, 11 September 2026 — decision 28 is taken.** A baseline is paced,
+rated, share-capped and settled like any version; its tag and its seat opposite every trial are all
+that set it apart. `scripts/check/autoscaler.sql` follows, and prepares again: it had drifted to
+`FROM models … md.model_id`, a column the entry/version split took away.
+
 **Trained baselines are on the ladder, 10 September 2026.** Three artifacts from
 `Tiny-Brains/ants-baselines` are seeded, resident on both fleet replicas, and rated: a match between
 two of them ran 523 turns with zero strikes, uploaded its replay and folded into ratings. The

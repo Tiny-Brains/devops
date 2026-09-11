@@ -12,8 +12,9 @@
 #      rows are drained by replicas that are going away, and counting them would ask for new-engine
 #      replicas to cover work they cannot claim.
 #
-# autoscaler.sql is jodi's own demand view, verbatim out of tb-pair-run.json, with the scaling
-# arithmetic on top -- so what runs here is what pair already computes.
+# autoscaler.sql is jodi's demand view at the deploy's numbers -- the `d_demand` shape soma's verify
+# statements carry, which is what pair computes for a season that sets no rules -- with the scaling
+# arithmetic on top.
 #
 # Nothing touches the live database: the scratch copy is dropped at the end.
 set -euo pipefail
@@ -34,8 +35,9 @@ docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" -d "$LIVE" --no-owner --no-pri
 GAME_ID=$(psql -d "$SCRATCH" -At -c "SELECT id FROM games WHERE slug = 'ants'")
 
 # Every non-baseline version into the live season, so the ladder has a field at all: on the live
-# stack the versions sit in closed seasons and the open one holds only baselines, which makes its
-# demand structurally zero -- true of the stack, not of the query.
+# stack the versions sit in closed seasons and the open one holds only baselines. Not the baselines
+# themselves: each closed season holds an earlier carried copy of each, and moving those would stack
+# several active versions of one baseline into the live season and count its demand several times.
 psql -d "$SCRATCH" -q -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 ALTER TABLE model_versions DROP CONSTRAINT IF EXISTS model_versions_one_active_excl;
 UPDATE model_versions md SET season_id = (SELECT id FROM seasons WHERE closed_at IS NULL)
