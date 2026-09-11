@@ -39,6 +39,12 @@ oauth_redirect_uri = "${OAUTH_REDIRECT_URI:-http://localhost:5173/v1/auth/github
 cookie_secure      = ${SOMA_COOKIE_SECURE:-true}
 # How soon after a season closes the next may open.
 season_gap_days    = ${SEASON_GAP_DAYS:-1}
+# The token soma-models-create asks GitHub who owns a repository with. EMPTY IS A WORKING DEFAULT
+# and a bad one: unauthenticated GitHub is 60 requests an hour PER IP, and the IP is this server's,
+# so it is 60 model creations an hour for every competitor together -- and an exhausted budget
+# refuses them all, because the check fails closed. Authenticated is 5,000. A read-only token with
+# no scopes is enough; check/configs.sh says so out loud when this is unset.
+github_token       = "${GITHUB_TOKEN:-}"
 
 # ------------------------------------------------------------------------------- JODI
 # Every number below is PROVISIONAL: policy guesses only a running ladder can tune. They live here

@@ -154,6 +154,7 @@ must be replaced for a deployed environment.
 | KALAM_SHUTDOWN_DRAIN_SECS, KALAM_SHUTDOWN_FORCE_SECS, KALAM_CRON_SHUTDOWN_SECS, KALAM_STOP_GRACE | Replica shutdown policy | Too-short outer deadlines interrupt waves |
 | SOMA_SHUTDOWN_DRAIN_SECS, SOMA_SHUTDOWN_FORCE_SECS, SOMA_CRON_SHUTDOWN_SECS, SOMA_STOP_GRACE | API/clock shutdown policy | In-flight work may be cut short |
 | SEASON_GAP_DAYS | Season-opening policy | Default applies; must reach the Soma container |
+| GITHUB_TOKEN | Read-only token the repository-ownership check calls GitHub with | Optional, and a bad default: unset means 60 requests an hour for the whole server, and model creation refuses once that runs out. `check/configs.sh` says so |
 
 The templates contain application `[vars]` and provisional policy values. A rollout needs new capacity ready
 before changing the active digest, then drain old replicas; the local loader's pending-row restamping

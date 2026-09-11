@@ -172,8 +172,9 @@ WITH missing AS (
        AND NOT EXISTS (SELECT 1 FROM models e WHERE e.owner_id = u.id AND e.game_id = g.id)
 ), entry AS (
     -- The ENTRY first: a baseline is a model with a name and a repository, exactly as a
-    -- competitor's is. Three of them share one repository, which is legal because an entry is
-    -- unique per (owner, repository) rather than globally.
+    -- competitor's is. Three of them share one repository, which is legal because these rows carry
+    -- no owner_github_id and models_repo_uniq is partial on it -- nothing vouched for them, because
+    -- they never went through the route that asks GitHub who owns a repository.
     INSERT INTO models (owner_id, game_id, name, repo)
     SELECT owner_id, game_id, substring(handle from 'baseline\.(.*)'),
            'Tiny-Brains/ants-baselines'

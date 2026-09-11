@@ -19,12 +19,19 @@ ON CONFLICT (slug) DO NOTHING;
 -- one opens now and takes submissions for a year, pinning the placeholder digest that the loader
 -- overwrites on the first `up`. Later seasons are the admin's.
 --
--- Its rules document names `Tiny-Brains` as an allowed organisation. The baselines share one
--- repository that belongs to none of their handles, so without it they would be describable only
--- by an exception; with it they are admitted by exactly the rule a competitor is admitted by.
-INSERT INTO seasons (game_id, number, engine_digest, submissions_open_at, submissions_close_at, rules)
-SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year',
-       '{"repo": {"enabled": true, "must_be_owned": true, "allow_orgs": ["Tiny-Brains"]}}'::jsonb
+-- IT DECLARES NO RULES, and the empty document is the open contest: every block is optional and
+-- absent means no limit, except `repo`, whose `enabled` defaults true so a season silent about
+-- ownership is not one where anyone may enter anyone's repository.
+--
+-- It used to name `Tiny-Brains` under repo.allow_orgs, so that the baselines -- three users sharing
+-- one repository none of them owns -- were describable by the same rule a competitor is admitted
+-- by. They never needed it: they are INSERTed below and never reach soma-models-create, so the rule
+-- bought nothing and cost a great deal. An organisation allowance is an allowance to everyone
+-- unless the season also names a cohort, which meant any signed-in competitor could enter
+-- `Tiny-Brains/ants-baselines` and submit the platform's own baseline release as their own model.
+-- season_rules_ok() now refuses the key without `participants`; this line is why.
+INSERT INTO seasons (game_id, number, engine_digest, submissions_open_at, submissions_close_at)
+SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year'
   FROM games g
  WHERE g.slug = 'ants'
    AND NOT EXISTS (SELECT 1 FROM seasons s WHERE s.game_id = g.id);
@@ -33,9 +40,10 @@ SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year',
 
 -- Baselines are competitors: each is a user, so they can be told apart on a leaderboard that
 -- displays an entry as its owner's handle. They never sign in, which is why github_id is null.
--- Three users, three ENTRIES, one shared repository -- which is legal because an entry is unique
--- per (owner, repository) and not globally: the cross-competitor half of that rule comes from
--- repo_owned(), not from an index.
+-- Three users, three ENTRIES, one shared repository -- which is legal because these rows carry no
+-- owner_github_id, and models_repo_uniq is partial on it. Nothing vouched for them: they were
+-- INSERTed here rather than created through soma-models-create, which is the only thing that asks
+-- GitHub who owns a repository.
 -- They exist because nothing has a trial opponent until they do.
 --
 -- ONE ROW PER ARTIFACT IN `ants-baselines/models/`, and the handle is `baseline.<directory>`, which

@@ -26,6 +26,8 @@ fail=0
 ok()   { printf '  ok    %s\n' "$1"; }
 bad()  { printf '  FAIL  %s\n' "$1" >&2; fail=1; }
 skip() { printf '  skip  %s\n' "$1"; }
+# A deployment property this repository cannot decide, but can refuse to let pass silently.
+note() { printf '  note  %s\n' "$1"; }
 
 for f in "$SOMA" "$KALAM"; do
   [ -r "$f" ] || { echo "missing $f" >&2; exit 1; }
@@ -97,6 +99,18 @@ for k in burst steady_cap settled_sigma cross_class_fraction repair_cap presets 
   fi
 done
 ok "every [vars] fallback a season rule coalesces against is present"
+
+# ---- 2b. the GitHub token, which is optional in code and required in practice ----
+# soma-models-create asks GitHub who owns a repository before it will create an entry, and the
+# check fails closed. Unauthenticated that call is 60 an hour PER IP -- this server's IP, shared by
+# every competitor -- so an exhausted budget refuses every model creation until the hour rolls.
+if ! grep -q '^github_token' "$SOMA"; then
+  bad "$SOMA declares no github_token; soma-models-create reads metadata.vars.github_token and would always take the anonymous branch"
+elif [ -f .env ] && grep -Eq '^GITHUB_TOKEN=.+' .env; then
+  ok "GITHUB_TOKEN is set, so the ownership check has 5,000 GitHub requests an hour"
+else
+  note "GITHUB_TOKEN is unset, so the ownership check is anonymous: 60 GitHub requests an hour for the WHOLE server, and model creation refuses when that runs out. Fine for a dev stack; set it for anything else"
+fi
 
 # ---- 3. the engine digest is derived, never typed ----------------------------
 ed=$(var "$KALAM" engine_digest)
