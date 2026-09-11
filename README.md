@@ -285,6 +285,16 @@ orchestrator's secret store and sets only the public half.
 
 ## Status
 
+**`tinybrains env` plays its waves in parallel, 11 September 2026.** A pool's waves share nothing
+but the compiled component, and the env stepped them one after another on one core. Each wave's
+`observe`, `step` and `finish` now run on their own thread and the answers fold back in wave order,
+so episode keys, refill seeds and every reply are unchanged — each reply line hashed the same across
+both binaries and both engines. With the faster engine (`ants` Status), random play on this M2 Pro:
+the trainer's default pool (mixed presets, 4 waves of 8) went from 3,987 to 12,691 seat-turns/s,
+cell 4x16 from 2,663 to 13,035, and 10 waves of 16 cell matches from 3,295 to 25,002. Pooled wasm
+instances, as orion-server allocates them, measured within noise here, so the host still
+instantiates each call from the component.
+
 **Baselines are ordinary entries, 11 September 2026 — decision 28 is taken.** A baseline is paced,
 rated, share-capped and settled like any version; its tag and its seat opposite every trial are all
 that set it apart. `scripts/check/autoscaler.sql` follows, and prepares again: it had drifted to

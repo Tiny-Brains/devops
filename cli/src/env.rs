@@ -158,22 +158,27 @@ impl<'a> Pool<'a> {
     /// order within a wave. Both sides derive it from `wave_state`, which is what the protocol
     /// requires of a positional action list.
     pub fn observe(&mut self) -> Result<(Vec<Value>, Vec<Value>), String> {
+        // `refs` is empty on purpose. Kalam needs it to attach a seat's identity to a view because
+        // an Orion `map` body cannot join back to the caller's rows; this loop has the rows in
+        // hand, and every view already carries its own `m` and `seat`.
+        let this = &*self;
+        let per_wave = in_parallel(self.waves.len(), |w| -> Result<_, String> {
+            let mut obs = this.invoke_wave(w, "observe", &json!({ "refs": [] }))?;
+            let views = match obs["views"].take() {
+                Value::Array(v) => v,
+                _ => Vec::new(),
+            };
+            Ok((views, this.live_scores(w)?))
+        });
+
         let mut seats = Vec::new();
         let mut scores = Vec::new();
-
-        for w in 0..self.waves.len() {
-            // `refs` is empty on purpose. Kalam needs it to attach a seat's identity to a view
-            // because an Orion `map` body cannot join back to the caller's rows; this loop has the
-            // rows in hand, and every view already carries its own `m` and `seat`.
-            let obs = self.invoke_wave(w, "observe", &json!({ "refs": [] }))?;
-            let views = obs["views"].as_array().cloned().unwrap_or_default();
-
-            for r in self.live_scores(w)? {
-                scores.push(r);
-            }
-
+        for (w, got) in per_wave.into_iter().enumerate() {
+            let (views, live) = got?;
+            scores.extend(live);
+            self.last_counts[w] = views.len();
             let wave = &self.waves[w];
-            for v in &views {
+            for mut v in views {
                 let m = v["m"].as_u64().unwrap_or(0) as usize;
                 seats.push(json!({
                     "w": w,
@@ -181,10 +186,9 @@ impl<'a> Pool<'a> {
                     "ep": wave.eps.get(m).copied().unwrap_or(0),
                     "seat": v["seat"],
                     "turn": wave.turn,
-                    "obs": v["view"],
+                    "obs": v["view"].take(),
                 }));
             }
-            self.last_counts[w] = views.len();
         }
         Ok((seats, scores))
     }
@@ -205,27 +209,43 @@ impl<'a> Pool<'a> {
             ));
         }
 
-        let mut ended = Vec::new();
+        // Cut the flat list back into per-wave calls exactly the way `observe` joined it, then play
+        // every wave at once: each is its own `wave_state`, so the calls share nothing but the
+        // compiled component. Everything that touches the pool's own counters -- the episode keys,
+        // the seeds a refill draws -- happens afterwards and in wave order, so a run is the same
+        // run however many cores played it.
+        let mut cuts = Vec::with_capacity(self.waves.len());
         let mut at = 0;
-        for w in 0..self.waves.len() {
-            let n = self.last_counts[w];
-            if n == 0 {
-                continue;
-            }
-            let acts: Vec<Value> = actions[at..at + n].iter().map(expand).collect();
+        for &n in &self.last_counts {
+            cuts.push(&actions[at..at + n]);
             at += n;
-            self.seat_turns += n as u64;
-
-            let out = self.invoke_wave(w, "step", &json!({ "actions": acts }))?;
-            self.waves[w].state = out["wave_state"].clone();
-            self.waves[w].turn += 1;
-
+        }
+        let this = &*self;
+        let played = in_parallel(self.waves.len(), |w| -> Result<Option<Stepped>, String> {
+            if cuts[w].is_empty() {
+                return Ok(None);
+            }
+            let acts: Vec<Value> = cuts[w].iter().map(expand).collect();
+            let mut out = this.invoke_wave(w, "step", &json!({ "actions": acts }))?;
+            let state = out["wave_state"].take();
             let just: Vec<usize> = out["ended"]
                 .as_array()
                 .map(|a| a.iter().filter_map(Value::as_u64).map(|x| x as usize).collect())
                 .unwrap_or_default();
+            // Only a wave in which a match just ended pays for `finish`.
+            let results = if just.is_empty() { Vec::new() } else { this.results_of(&state)? };
+            Ok(Some(Stepped { state, just, results }))
+        });
+
+        let mut ended = Vec::new();
+        for (w, got) in played.into_iter().enumerate() {
+            let Some(Stepped { state, just, results }) = got? else { continue };
+            self.seat_turns += self.last_counts[w] as u64;
+            self.waves[w].state = state;
+            self.waves[w].turn += 1;
+
             if !just.is_empty() {
-                for r in self.ended_rows(w, &just)? {
+                for r in self.ended_rows(w, &just, results) {
                     ended.push(r);
                     self.episodes += 1;
                 }
@@ -278,10 +298,10 @@ impl<'a> Pool<'a> {
     }
 
     /// The full result of the matches that ended on this step, in the order they were named.
-    fn ended_rows(&self, w: usize, just: &[usize]) -> Result<Vec<Value>, String> {
+    /// `results` is `finish` over the state that step returned, taken on the wave's own thread.
+    fn ended_rows(&self, w: usize, just: &[usize], results: Vec<Value>) -> Vec<Value> {
         let wave = &self.waves[w];
-        Ok(self
-            .results(w)?
+        results
             .into_iter()
             .filter(|r| just.contains(&(r["m"].as_u64().unwrap_or(0) as usize)))
             .map(|r| {
@@ -298,14 +318,21 @@ impl<'a> Pool<'a> {
                     "map_id": wave.map_ids.get(m).cloned().unwrap_or_default(),
                 })
             })
-            .collect())
+            .collect()
     }
 
     /// `finish` over one wave. `map` never leaves this function: it is tens of kilobytes, it exists
     /// so a replay envelope can stand alone, and a training loop has no replay.
     fn results(&self, w: usize) -> Result<Vec<Value>, String> {
-        let fin = self.invoke_wave(w, "finish", &json!({}))?;
-        Ok(fin["results"].as_array().cloned().unwrap_or_default())
+        self.results_of(&self.waves[w].state)
+    }
+
+    fn results_of(&self, state: &Value) -> Result<Vec<Value>, String> {
+        let mut fin = self.invoke("finish", &json!({ "wave_state": state }))?;
+        Ok(match fin["results"].take() {
+            Value::Array(r) => r,
+            _ => Vec::new(),
+        })
     }
 
     fn invoke_wave(&self, w: usize, name: &str, extra: &Value) -> Result<Value, String> {
@@ -319,6 +346,38 @@ impl<'a> Pool<'a> {
             .invoke(&format!("tb.{}.{}", self.game.slug, name), req)
             .map_err(|e: Fault| format!("the cartridge refused: {e}"))
     }
+}
+
+/// What one wave's `step` came back with: its next state, the matches that just ended, and — only
+/// when some did — `finish` over that state.
+struct Stepped {
+    state: Value,
+    just: Vec<usize>,
+    results: Vec<Value>,
+}
+
+/// `f(0..n)` spread over the machine's cores, answered in index order.
+///
+/// A wave is one `wave_state` and one call, and waves share nothing but the compiled component, so
+/// a pool of them is embarrassingly parallel — a trainer holding four waves was using one core of
+/// ten. Contiguous runs of waves per thread, never more threads than cores, and nothing here decides
+/// an order: the caller folds the answers back in index order.
+fn in_parallel<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(1, |c| c.get()).min(n);
+    if threads <= 1 {
+        return (0..n).map(f).collect();
+    }
+    let per = n.div_ceil(threads);
+    std::thread::scope(|s| {
+        let f = &f;
+        let runs: Vec<_> = (0..n)
+            .step_by(per)
+            .map(|lo| s.spawn(move || (lo..(lo + per).min(n)).map(f).collect::<Vec<T>>()))
+            .collect();
+        runs.into_iter()
+            .flat_map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    })
 }
 
 /// One seat's orders, from either wire form. A character that is not a direction is a hold, which
