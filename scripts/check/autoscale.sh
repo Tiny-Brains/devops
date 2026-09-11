@@ -37,9 +37,11 @@ GAME_ID=$(psql -d "$SCRATCH" -At -c "SELECT id FROM games WHERE slug = 'ants'")
 # stack the versions sit in closed seasons and the open one holds only baselines, which makes its
 # demand structurally zero -- true of the stack, not of the query.
 psql -d "$SCRATCH" -q -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
-ALTER TABLE models DROP CONSTRAINT IF EXISTS models_one_active_excl;
-UPDATE models md SET season_id = (SELECT id FROM seasons WHERE closed_at IS NULL)
-  FROM users u WHERE u.id = md.owner_id AND md.status = 'active' AND u.role <> 'baseline';
+ALTER TABLE model_versions DROP CONSTRAINT IF EXISTS model_versions_one_active_excl;
+UPDATE model_versions md SET season_id = (SELECT id FROM seasons WHERE closed_at IS NULL)
+  FROM models e, users u
+ WHERE e.id = md.model_id AND u.id = e.owner_id
+   AND md.status = 'active' AND u.role <> 'baseline';
 SQL
 
 stage() {  # $1 sql
@@ -59,10 +61,10 @@ ins AS (
          now() - (:'age'::int * interval '1 second')
     FROM src, generate_series(1, :'n'::int) g(i)
   RETURNING id)
-INSERT INTO match_seats (match_id, seat, model_id, weights_hash, adapter_hash)
-SELECT ins.id, s.seat, s.model_id, s.weights_hash, s.adapter_hash
+INSERT INTO match_seats (match_id, seat, version_id, weights_hash, adapter_hash)
+SELECT ins.id, s.seat, s.version_id, s.weights_hash, s.adapter_hash
   FROM ins CROSS JOIN LATERAL (
-       SELECT seat, model_id, weights_hash, adapter_hash FROM match_seats
+       SELECT seat, version_id, weights_hash, adapter_hash FROM match_seats
         WHERE match_id = (SELECT id FROM src)) s;
 SQL
 }

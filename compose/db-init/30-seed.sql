@@ -18,8 +18,13 @@ ON CONFLICT (slug) DO NOTHING;
 -- Every version belongs to a season, so a game needs one before anything can be submitted. This
 -- one opens now and takes submissions for a year, pinning the placeholder digest that the loader
 -- overwrites on the first `up`. Later seasons are the admin's.
-INSERT INTO seasons (game_id, number, engine_digest, submissions_open_at, submissions_close_at)
-SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year'
+--
+-- Its rules document names `Tiny-Brains` as an allowed organisation. The baselines share one
+-- repository that belongs to none of their handles, so without it they would be describable only
+-- by an exception; with it they are admitted by exactly the rule a competitor is admitted by.
+INSERT INTO seasons (game_id, number, engine_digest, submissions_open_at, submissions_close_at, rules)
+SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year',
+       '{"repo": {"enabled": true, "must_be_owned": true, "allow_orgs": ["Tiny-Brains"]}}'::jsonb
   FROM games g
  WHERE g.slug = 'ants'
    AND NOT EXISTS (SELECT 1 FROM seasons s WHERE s.game_id = g.id);
@@ -28,6 +33,9 @@ SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year'
 
 -- Baselines are competitors: each is a user, so they can be told apart on a leaderboard that
 -- displays an entry as its owner's handle. They never sign in, which is why github_id is null.
+-- Three users, three ENTRIES, one shared repository -- which is legal because an entry is unique
+-- per (owner, repository) and not globally: the cross-competitor half of that rule comes from
+-- repo_owned(), not from an index.
 -- They exist because nothing has a trial opponent until they do.
 --
 -- ONE ROW PER ARTIFACT IN `ants-baselines/models/`, and the handle is `baseline-<directory>`, which
@@ -59,38 +67,50 @@ ON CONFLICT (handle) DO NOTHING;
 --
 -- `adapter` is null on purpose: models_adapter_matches_hash would otherwise demand the text and the
 -- hash agree, and there is no honest text yet.
-INSERT INTO models (owner_id, game_id, season_id, version, repo, release_tag, commit_sha, status,
-                    weight_class, size_bytes, param_count, infer_us,
-                    weights_hash, adapter_hash, evaluator_digest)
-SELECT u.id, g.id, s.id, 1,
-       'Tiny-Brains/ants-baselines', 'v0-placeholder', NULL, 'active',
+-- One ENTRY per baseline, named for its artifact directory. The name is what tells three models
+-- of one repository apart on a ladder, and `micro-percell` is on it for exactly that reason.
+INSERT INTO models (owner_id, game_id, name, repo)
+SELECT u.id, g.id, substring(b.handle from 'baseline-(.*)'), 'Tiny-Brains/ants-baselines'
+  FROM baseline_roster b
+  JOIN users u ON u.handle = b.handle
+  CROSS JOIN games g
+ WHERE g.slug = 'ants'
+   AND NOT EXISTS (SELECT 1 FROM models m WHERE m.owner_id = u.id AND m.game_id = g.id);
+
+INSERT INTO model_versions (model_id, game_id, season_id, version, release_tag, commit_sha, status,
+                            weight_class, size_bytes, param_count, infer_us,
+                            weights_hash, adapter_hash, evaluator_digest)
+SELECT e.id, e.game_id, s.id, 1,
+       'v0-placeholder', NULL, 'active',
        b.weight_class, 0, 0, 0,
        'sha256:placeholder-' || u.handle,
        'sha256:placeholder-' || u.handle || '-adapter',
        'placeholder'
   FROM baseline_roster b
-  JOIN users u ON u.handle = b.handle
-  CROSS JOIN games g
+  JOIN users u  ON u.handle = b.handle
+  JOIN models e ON e.owner_id = u.id
+  JOIN games g  ON g.id = e.game_id AND g.slug = 'ants'
   JOIN seasons s ON s.game_id = g.id AND s.closed_at IS NULL      -- the live season: season 1
- WHERE g.slug = 'ants'
-   AND NOT EXISTS (SELECT 1 FROM models m WHERE m.owner_id = u.id AND m.game_id = g.id);
+ WHERE NOT EXISTS (SELECT 1 FROM model_versions v WHERE v.model_id = e.id);
 
 -- Two rating rows each -- class ladder and open -- at the prior, so a baseline is rated by the
 -- matches other people want rather than being an unrated void the fold silently drops.
 -- These MUST stay equal to [vars] prior_mu / prior_sigma; check/configs.sh asserts it.
-INSERT INTO ratings (model_id, ladder, mu, sigma)
-SELECT m.id, l.ladder, 25.0, 8.333333333333334
-  FROM models m
-  JOIN users u ON u.id = m.owner_id AND u.role = 'baseline'
-  CROSS JOIN LATERAL (VALUES (m.weight_class), ('open'::ladder)) AS l (ladder)
-ON CONFLICT (model_id, ladder) DO NOTHING;
+INSERT INTO ratings (version_id, ladder, mu, sigma)
+SELECT v.id, l.ladder, 25.0, 8.333333333333334
+  FROM model_versions v
+  JOIN models e ON e.id = v.model_id
+  JOIN users u ON u.id = e.owner_id AND u.role = 'baseline'
+  CROSS JOIN LATERAL (VALUES (v.weight_class), ('open'::ladder)) AS l (ladder)
+ON CONFLICT (version_id, ladder) DO NOTHING;
 
 -- seq 0, exactly as promotion writes one. Without it the first fold starts a chain with no origin
 -- and the audit has nothing to anchor on. It carries no match and no `before`, as
 -- rating_events_seed_shape requires.
-INSERT INTO rating_events (model_id, ladder, seq, mu_after, sigma_after)
-SELECT r.model_id, r.ladder, 0, r.mu, r.sigma
+INSERT INTO rating_events (version_id, ladder, seq, mu_after, sigma_after)
+SELECT r.version_id, r.ladder, 0, r.mu, r.sigma
   FROM ratings r
-  JOIN models m ON m.id = r.model_id
-  JOIN users u ON u.id = m.owner_id AND u.role = 'baseline'
-ON CONFLICT (model_id, ladder, seq) DO NOTHING;
+  JOIN model_versions v ON v.id = r.version_id
+  JOIN models e ON e.id = v.model_id
+  JOIN users u ON u.id = e.owner_id AND u.role = 'baseline'
+ON CONFLICT (version_id, ladder, seq) DO NOTHING;

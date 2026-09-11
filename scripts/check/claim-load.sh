@@ -77,10 +77,10 @@ WITH src AS (
       FROM src, generate_series(1, :'n'::int) g(i)
  RETURNING id
 )
-INSERT INTO match_seats (match_id, seat, model_id, weights_hash, adapter_hash)
-SELECT ins.id, s.seat, s.model_id, s.weights_hash, s.adapter_hash
+INSERT INTO match_seats (match_id, seat, version_id, weights_hash, adapter_hash)
+SELECT ins.id, s.seat, s.version_id, s.weights_hash, s.adapter_hash
   FROM ins CROSS JOIN LATERAL (
-       SELECT seat, model_id, weights_hash, adapter_hash FROM match_seats
+       SELECT seat, version_id, weights_hash, adapter_hash FROM match_seats
         WHERE match_id = (SELECT id FROM src)) s;
 ANALYZE matches;
 ANALYZE match_seats;

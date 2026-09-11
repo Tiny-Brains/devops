@@ -145,7 +145,10 @@ BEGIN
     SELECT string_agg(format('%s is seeded as %s but its artifact measures %s',
                              s.handle, m.weight_class, s.weight_class), E'\n  ')
       INTO bad
-      FROM seeding s JOIN users u ON u.handle = s.handle JOIN models m ON m.owner_id = u.id
+      FROM seeding s
+      JOIN users u ON u.handle = s.handle
+      JOIN models e ON e.owner_id = u.id
+      JOIN model_versions m ON m.model_id = e.id
      WHERE m.weight_class IS DISTINCT FROM s.weight_class::ladder;
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION E'a baseline changed weight class:\n  %\n\nRatings are keyed by ladder, so this needs a new handle rather than an update.', bad;
@@ -163,33 +166,46 @@ WITH missing AS (
       CROSS JOIN games g
       JOIN seasons se ON se.game_id = g.id AND se.closed_at IS NULL
      WHERE g.slug = 'ants'
-       AND NOT EXISTS (SELECT 1 FROM models m WHERE m.owner_id = u.id AND m.game_id = g.id)
-), made AS (
-    INSERT INTO models (owner_id, game_id, season_id, version, repo, release_tag, commit_sha,
-                        status, weight_class, size_bytes, param_count, infer_us,
-                        weights_hash, adapter_hash, adapter, evaluator_digest)
-    SELECT owner_id, game_id, season_id, 1,
-           'Tiny-Brains/ants-baselines', 'v0-seeded', NULL,
-           'active', weight_class::ladder, size_bytes, param_count, infer_us,
-           weights_hash, adapter_hash, adapter, evaluator_digest
+       AND NOT EXISTS (SELECT 1 FROM models e WHERE e.owner_id = u.id AND e.game_id = g.id)
+), entry AS (
+    -- The ENTRY first: a baseline is a model with a name and a repository, exactly as a
+    -- competitor's is. Three of them share one repository, which is legal because an entry is
+    -- unique per (owner, repository) rather than globally.
+    INSERT INTO models (owner_id, game_id, name, repo)
+    SELECT owner_id, game_id, substring(handle from 'baseline-(.*)'),
+           'Tiny-Brains/ants-baselines'
       FROM missing
+    RETURNING id, owner_id, game_id
+), made AS (
+    INSERT INTO model_versions (model_id, game_id, season_id, version, release_tag, commit_sha,
+                                status, weight_class, size_bytes, param_count, infer_us,
+                                weights_hash, adapter_hash, adapter, evaluator_digest)
+    SELECT entry.id, entry.game_id, missing.season_id, 1,
+           'v0-seeded', NULL,
+           'active', missing.weight_class::ladder, missing.size_bytes, missing.param_count,
+           missing.infer_us, missing.weights_hash, missing.adapter_hash, missing.adapter,
+           missing.evaluator_digest
+      FROM entry JOIN missing ON missing.owner_id = entry.owner_id
     RETURNING id, weight_class
 ), rated AS (
     -- Two ladders each -- the class and open -- at the prior, so a baseline is rated by the matches
     -- other people want rather than being an unrated void the fold silently drops.
-    INSERT INTO ratings (model_id, ladder, mu, sigma)
+    INSERT INTO ratings (version_id, ladder, mu, sigma)
     SELECT made.id, l.ladder, (:'mu')::float8, (:'sigma')::float8
       FROM made CROSS JOIN LATERAL (VALUES (made.weight_class), ('open'::ladder)) AS l (ladder)
-    ON CONFLICT (model_id, ladder) DO NOTHING
-    RETURNING model_id, ladder, mu, sigma
+    ON CONFLICT (version_id, ladder) DO NOTHING
+    RETURNING version_id, ladder, mu, sigma
 )
 -- seq 0, exactly as promotion writes one: no match and no `before`, as rating_events_seed_shape
 -- requires. Without it the first fold starts a chain with no origin.
-INSERT INTO rating_events (model_id, ladder, seq, mu_after, sigma_after)
-SELECT model_id, ladder, 0, mu, sigma FROM rated
-ON CONFLICT (model_id, ladder, seq) DO NOTHING;
+INSERT INTO rating_events (version_id, ladder, seq, mu_after, sigma_after)
+SELECT version_id, ladder, 0, mu, sigma FROM rated
+ON CONFLICT (version_id, ladder, seq) DO NOTHING;
 
-UPDATE models m
+-- Scoped through the ENTRY and to the versions of THIS handle's model. Scoped by owner alone --
+-- as it was when a competitor could hold only one model -- this would overwrite every version of
+-- every model that owner has, which for a baseline is now three rows and not one.
+UPDATE model_versions m
    SET weights_hash = s.weights_hash,
        adapter_hash = s.adapter_hash,
        adapter      = s.adapter,
@@ -197,24 +213,25 @@ UPDATE models m
        param_count  = s.param_count,
        infer_us     = s.infer_us,
        evaluator_digest = s.evaluator_digest
-  FROM seeding s, users u
- WHERE u.handle = s.handle AND m.owner_id = u.id;
+  FROM seeding s, users u, models e
+ WHERE u.handle = s.handle AND e.owner_id = u.id AND m.model_id = e.id;
 
 -- Any other model still carrying a hash axon cannot key: the hand-made candidates inserted to drive
 -- Jodi before anything could play. They get the smallest baseline, which is the cheapest to hold.
 -- Qualified on both sides: `seeding` has a `weights_hash` too, and an UPDATE ... FROM makes the
 -- bare name ambiguous rather than defaulting to the target.
-UPDATE models m SET weights_hash = s.weights_hash, adapter_hash = s.adapter_hash, adapter = s.adapter
+UPDATE model_versions m SET weights_hash = s.weights_hash, adapter_hash = s.adapter_hash,
+       adapter = s.adapter
   FROM (SELECT * FROM seeding ORDER BY size_bytes LIMIT 1) s
  WHERE m.status IN ('testing', 'verified', 'active', 'superseded')
    AND m.weights_hash !~ '^sha256:[0-9a-f]{64}$';
 
 -- Re-point pending rows only: anything already played keeps what it played, which is the record.
-UPDATE match_seats s SET weights_hash = md.weights_hash, adapter_hash = md.adapter_hash
-  FROM models md, matches mt
- WHERE s.model_id = md.id AND mt.id = s.match_id AND mt.status = 'pending'
-   AND (s.weights_hash IS DISTINCT FROM md.weights_hash
-     OR s.adapter_hash IS DISTINCT FROM md.adapter_hash);
+UPDATE match_seats s SET weights_hash = v.weights_hash, adapter_hash = v.adapter_hash
+  FROM model_versions v, matches mt
+ WHERE s.version_id = v.id AND mt.id = s.match_id AND mt.status = 'pending'
+   AND (s.weights_hash IS DISTINCT FROM v.weights_hash
+     OR s.adapter_hash IS DISTINCT FROM v.adapter_hash);
 
 -- Last, and inside the same transaction: the roster the pair clock reads has changed, and it must
 -- not see the new epoch before it can see the rows the epoch is about.
@@ -222,8 +239,8 @@ UPDATE clocks SET epoch = epoch + 1, updated_at = now() WHERE key = 'roster';
 
 COMMIT;
 
-SELECT u.handle, m.weight_class, m.size_bytes, m.param_count, m.infer_us,
-       left(m.weights_hash, 18) AS weights
-  FROM models m JOIN users u ON u.id = m.owner_id
- WHERE u.role = 'baseline' ORDER BY m.size_bytes;
+SELECT u.handle, e.name AS model, v.weight_class, v.size_bytes, v.param_count, v.infer_us,
+       left(v.weights_hash, 18) AS weights
+  FROM model_versions v JOIN models e ON e.id = v.model_id JOIN users u ON u.id = e.owner_id
+ WHERE u.role = 'baseline' ORDER BY v.size_bytes;
 SQL

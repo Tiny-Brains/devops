@@ -41,14 +41,19 @@ var() {  # $1 file, $2 key
 echo "==> values that must agree across the split"
 
 # ---- 1. the forfeit rule -----------------------------------------------------
+# THIS USED TO BE AN EQUALITY and is now an absence, which is the stronger check. The ceiling is
+# pinned onto matches.strike_ceiling by pair and read from the row by both the wave that applies it
+# and the clock that judges its result, so there is no longer a second copy to keep in step. A
+# `strike_ceiling` reappearing in Kalam's config is dead config that a future edit would wire back
+# up, recreating exactly the hazard the column removed.
 fs=$(var "$SOMA" forfeit_strikes)
 sc=$(var "$KALAM" strike_ceiling)
-if [ -z "$fs" ] || [ -z "$sc" ]; then
-  bad "forfeit_strikes ($SOMA) / strike_ceiling ($KALAM): one of them is missing"
-elif [ "$fs" != "$sc" ]; then
-  bad "forfeit_strikes = $fs but strike_ceiling = $sc -- count would judge by a rule the wave did not play by"
+if [ -z "$fs" ]; then
+  bad "forfeit_strikes is missing from $SOMA -- it is pair's fallback when a season declares none, and matches.strike_ceiling is NOT NULL"
+elif [ -n "$sc" ]; then
+  bad "$KALAM still sets strike_ceiling = $sc -- Kalam reads the ceiling off the match row now, and a second copy is what the column exists to prevent"
 else
-  ok "forfeit_strikes == strike_ceiling == $fs"
+  ok "forfeit_strikes = $fs in $SOMA only; Kalam reads matches.strike_ceiling"
 fi
 
 # ---- 2. the rating prior -----------------------------------------------------
@@ -67,16 +72,31 @@ for k in prior_mu prior_sigma; do
   fi
 done
 
-# A baseline's first fold reads [vars] as its own prior, so the seed must carry the same number.
+# A baseline's first fold reads the prior as its own, so the seed must carry the same number.
+# Anchored on the INSERT's own line rather than grepped loosely over the file: an unanchored match
+# on "25.0" also matches 125.0, a comment, or a number that means something else entirely.
 seed=compose/db-init/30-seed.sql
 if [ -r "$seed" ]; then
   mu=$(var "$SOMA" prior_mu)
-  if grep -q "$mu" "$seed"; then
-    ok "prior_mu $mu appears in $seed"
+  if grep -qE "SELECT[^;]*, *${mu%.0}(\.[0-9]+)?, *[0-9]" "$seed" || grep -qE "^ *SELECT .*\b${mu}\b" "$seed"; then
+    ok "prior_mu $mu is what $seed writes"
   else
-    bad "prior_mu is $mu but $seed does not mention it -- a baseline's first fold would use another prior"
+    bad "prior_mu is $mu but $seed does not seed it -- a baseline's first fold would use another prior"
   fi
 fi
+
+# ---- 2b. the fallbacks a season's rules coalesce against ---------------------
+# Every rule in seasons.rules is read `coalesce(rule, <var>)`, so "a season that declares nothing
+# behaves exactly as the deploy does" is only true while the var it falls back to still exists.
+# Deleting one "because it moved to the season" is how that quietly stops being true.
+for k in burst steady_cap settled_sigma cross_class_fraction repair_cap presets \
+         opset_min opset_max op_allowlist prior_mu prior_sigma sigma_inflation \
+         ts_beta ts_tau ts_draw_probability; do
+  if [ -z "$(var "$SOMA" "$k")" ]; then
+    bad "$k is missing from $SOMA -- it is the fallback a season's rules coalesce against"
+  fi
+done
+ok "every [vars] fallback a season rule coalesces against is present"
 
 # ---- 3. the engine digest is derived, never typed ----------------------------
 ed=$(var "$KALAM" engine_digest)

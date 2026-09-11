@@ -15,7 +15,7 @@ WITH first AS MATERIALIZED (
     SELECT m.id, m.preset
       FROM matches m
      WHERE m.status = 'pending' AND m.engine_digest = :digest
-     ORDER BY (m.trial_model_id IS NOT NULL) DESC,
+     ORDER BY (m.trial_version_id IS NOT NULL) DESC,
               EXISTS (SELECT 1 FROM match_seats s
                        WHERE s.match_id = m.id AND s.weights_hash = ANY (:resident::text[])) DESC,
               m.created_at, m.id
@@ -28,7 +28,7 @@ WITH first AS MATERIALIZED (
             OR EXISTS (SELECT 1 FROM match_seats a
                          JOIN match_seats b ON b.weights_hash = a.weights_hash
                         WHERE a.match_id = f.id AND b.match_id = m.id))
-     ORDER BY (m.id = f.id) DESC, (m.trial_model_id IS NOT NULL) DESC, m.created_at, m.id
+     ORDER BY (m.id = f.id) DESC, (m.trial_version_id IS NOT NULL) DESC, m.created_at, m.id
      LIMIT 16 FOR UPDATE OF m SKIP LOCKED
 )
 UPDATE matches m
