@@ -98,7 +98,7 @@ import json, sys, pathlib
 d, name = pathlib.Path(sys.argv[1]), sys.argv[2]
 m = json.load(open(d / "metrics.json"))
 print(json.dumps({
-    "handle": f"baseline-{name}",
+    "handle": f"baseline.{name}",
     "weight_class": m["class"],
     "weights_hash": m["weights_hash"],
     "adapter_hash": m["adapter_hash"],
@@ -129,10 +129,13 @@ SELECT * FROM jsonb_to_recordset((:'rows')::jsonb)
            size_bytes bigint, param_count bigint, infer_us bigint, evaluator_digest text);
 
 -- A baseline is a competitor: a user, so it can be told apart on a leaderboard that shows an entry
--- as its owner's handle. github_id stays null; they never sign in.
+-- as its owner's handle. github_id stays null; they never sign in, and the handle lives under the
+-- reserved `baseline.` prefix -- a dot, which a GitHub login cannot contain -- so a real account
+-- can never be locked out of sign-in by colliding with one. The conflict target is the expression
+-- users_handle_uniq was declared with, not the column.
 INSERT INTO users (handle, role)
 SELECT handle, 'baseline' FROM seeding
-ON CONFLICT (handle) DO NOTHING;
+ON CONFLICT (lower(handle)) DO NOTHING;
 
 -- THE CLASS IS CHECKED, NOT SET. `ratings` and `rating_events` are keyed by ladder, and a ladder
 -- IS a weight class, so moving a baseline between classes here would strand every rating row it
@@ -172,7 +175,7 @@ WITH missing AS (
     -- competitor's is. Three of them share one repository, which is legal because an entry is
     -- unique per (owner, repository) rather than globally.
     INSERT INTO models (owner_id, game_id, name, repo)
-    SELECT owner_id, game_id, substring(handle from 'baseline-(.*)'),
+    SELECT owner_id, game_id, substring(handle from 'baseline\.(.*)'),
            'Tiny-Brains/ants-baselines'
       FROM missing
     RETURNING id, owner_id, game_id

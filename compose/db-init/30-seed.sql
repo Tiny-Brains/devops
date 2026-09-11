@@ -38,10 +38,15 @@ SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year',
 -- repo_owned(), not from an index.
 -- They exist because nothing has a trial opponent until they do.
 --
--- ONE ROW PER ARTIFACT IN `ants-baselines/models/`, and the handle is `baseline-<directory>`, which
--- is what `scripts/dev/seed-baselines.sh` matches on. The class must be the class the artifact
--- actually measures into: `ratings` and `rating_events` are keyed by ladder and a ladder IS a
--- weight class, so a baseline cannot be moved between them later -- the seeder checks and refuses.
+-- ONE ROW PER ARTIFACT IN `ants-baselines/models/`, and the handle is `baseline.<directory>`, which
+-- is what `scripts/dev/seed-baselines.sh` matches on. THE DOT IS THE POINT: a GitHub login is
+-- [A-Za-z0-9-], so `baseline.` is a namespace GitHub cannot mint, and users_baseline_handle_reserved
+-- requires it. Under the old `baseline-` spelling a real account whose login happened to match --
+-- `baseline-nano-bc` was a perfectly mintable login -- could never sign in at all.
+--
+-- The class must be the class the artifact actually measures into: `ratings` and `rating_events`
+-- are keyed by ladder and a ladder IS a weight class, so a baseline cannot be moved between them
+-- later -- the seeder checks and refuses.
 --
 -- Adding a baseline is a line here and a re-run of the seeder. The seeder can also create one this
 -- database has never seen, so an existing stack converges without `docker compose down -v`.
@@ -49,15 +54,17 @@ SELECT g.id, 1, g.active_engine_digest, now(), now() + interval '1 year',
 -- autocommit, so an on-commit table would be gone before the next statement could read it.
 CREATE TEMP TABLE baseline_roster (handle text, weight_class ladder);
 INSERT INTO baseline_roster VALUES
-    ('baseline-nano-bc',       'nano'),
-    ('baseline-micro-bc',      'micro'),
+    ('baseline.nano-bc',       'nano'),
+    ('baseline.micro-bc',      'micro'),
     -- The method column's control: same class, same data, same parameter count as micro-bc, and no
     -- receptive field at all. It is a weak player on purpose and belongs on the ladder for the same
     -- reason it exists -- the comparison is the artifact.
-    ('baseline-micro-percell', 'micro');
+    ('baseline.micro-percell', 'micro');
 
+-- `ON CONFLICT (lower(handle))`, the expression and not the column: users_handle_uniq is an
+-- expression index, and it is only a valid arbiter written the way it was declared.
 INSERT INTO users (handle, role) SELECT handle, 'baseline' FROM baseline_roster
-ON CONFLICT (handle) DO NOTHING;
+ON CONFLICT (lower(handle)) DO NOTHING;
 
 -- One version each, 'active', so the trial insert can find them. The hashes are placeholders: a
 -- volume initialises long before any model file exists, so these rows make the PAIRING path
@@ -70,7 +77,7 @@ ON CONFLICT (handle) DO NOTHING;
 -- One ENTRY per baseline, named for its artifact directory. The name is what tells three models
 -- of one repository apart on a ladder, and `micro-percell` is on it for exactly that reason.
 INSERT INTO models (owner_id, game_id, name, repo)
-SELECT u.id, g.id, substring(b.handle from 'baseline-(.*)'), 'Tiny-Brains/ants-baselines'
+SELECT u.id, g.id, substring(b.handle from 'baseline\.(.*)'), 'Tiny-Brains/ants-baselines'
   FROM baseline_roster b
   JOIN users u ON u.handle = b.handle
   CROSS JOIN games g
