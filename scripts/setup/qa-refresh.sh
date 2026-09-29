@@ -31,6 +31,9 @@
 #   4  migrate            soma's scripts/cutover, with the CANDIDATE IMAGE'S migrations -- the very
 #                         bytes its bootstrap will hash, so bootstrap then finds the schema current.
 #                         Skipped when the two digests already agree.
+#   4b Orion's state      retire.sh, soma's other cutover half: the backup carries production's
+#                         orion_state, and a boot apply never prunes -- so a channel the release
+#                         renamed onto its own old route stops the apply and the node exits.
 #   5  the models bucket   production's models copied into QA's, so a copied submission is a model
 #                         that actually loads. Replays are NOT copied: a QA match writes its own.
 #   6  --up                the stack, on the refreshed database.
@@ -262,6 +265,28 @@ else
     echo "QA's bootstrap would refuse it by name. The cutover rolled back." >&2
     exit 1; }
   echo "    now on sha256:${NOW:0:12}... -- the candidate's bootstrap will find it current"
+fi
+
+# ---- 4b  Orion's state ------------------------------------------------------------------------------
+# THE OTHER HALF OF THE CUTOVER, and it is not optional. A backup carries production's orion_state,
+# which holds the definitions the OLD package shipped; the new node's boot apply never prunes, and
+# Orion refuses to activate a channel on a route another ACTIVE channel already claims. So a release
+# that renames a channel onto its own old route -- `soma-admin-baselines-*` -> `soma-user-baselines-*`
+# here -- stops the apply dead and the node exits, over and over, while its database is perfectly
+# fine. The same state is why connectors and channels the new package dropped come back as
+# "failed to resolve secret reference" and "cannot be compiled": they are not in the new artifact at
+# all, they are left over in the state.
+#
+# retire.sh archives every soma-tagged channel and workflow whose id the new artifact does not
+# carry, and disables such connectors. It must run with the node STOPPED, after the database is
+# migrated and before the new node boots -- which is exactly here.
+echo "==> 4b migrating Orion's state (retiring what the candidate no longer ships)"
+if [ -x "$CUTOVER_DIR/retire.sh" ] && [ -n "$QA_STATE_URL" ]; then
+  SOMA_IMAGE="$SOMA_IMAGE" DOCKER_NETWORK="$DOCKER_NETWORK" \
+    "$CUTOVER_DIR/retire.sh" "$QA_STATE_URL" --commit 2>&1 | sed 's/^/    /'
+else
+  echo "    SKIPPED: no $CUTOVER_DIR/retire.sh, or no ORION_STATE_DB_URL" >&2
+  echo "    The node's boot apply will stop at the first channel the candidate renamed." >&2
 fi
 
 # ---- 5  the models bucket ---------------------------------------------------------------------------
