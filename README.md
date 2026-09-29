@@ -152,6 +152,11 @@ a runner key minted on QA, never production's.
 - **QA and production must not share a Redis.** Soma's clocks are Orion cluster singletons and
   `[cluster] redis_url` has no key prefix: one Redis across both elects one pair clock over four
   nodes, and production's ladder goes quietly idle.
+- **A relative path in a compose file is resolved against `compose/`, not against `devops/`.** That
+  is `RUNNER_SIG_DIR`, and it is the one variable in these files that names a host directory: every
+  environment's value begins `../<env>/`. A path that does not exist is not an error — Docker
+  creates it, empty, and the node then stops at its boot apply with no signature for a plugin it
+  must load.
 - **Nothing here syncs.** A value changed on the VM is not changed here. When two copies of one
   environment disagree, **the machine that runs it wins** — `prod/` on a laptop is a reference copy
   and is probably stale.
