@@ -55,15 +55,17 @@ PSQL_IMAGE="${PSQL_IMAGE:-postgres:16-alpine}"
 RCLONE_IMAGE="${RCLONE_IMAGE:-rclone/rclone:1}"
 DOCKER_NETWORK="${DOCKER_NETWORK:-host}"
 
-GO=0; UP=0; SKIP_MODELS=0; FROM_DIGEST="${FROM_DIGEST:-}"; BACKUP_ID="${BACKUP_ID:-}"
+GO=0; UP=0; SKIP_MODELS=0; SKIP_RESTORE=0; FROM_DIGEST="${FROM_DIGEST:-}"; BACKUP_ID="${BACKUP_ID:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y)      GO=1 ;;
     --up)          UP=1 ;;
     --skip-models) SKIP_MODELS=1 ;;
+    # The backup is already on the instance; redo only what comes after it.
+    --skip-restore) SKIP_RESTORE=1 ;;
     --backup)      BACKUP_ID="${2:?--backup takes a backup id}"; shift ;;
     --from-digest) FROM_DIGEST="${2:?--from-digest takes a sha256 hex}"; shift ;;
-    *) echo "usage: scripts/setup/qa-refresh.sh [--yes] [--up] [--skip-models] [--backup <id>] [--from-digest <hex>]" >&2; exit 2 ;;
+    *) echo "usage: scripts/setup/qa-refresh.sh [--yes] [--up] [--skip-models] [--skip-restore] [--backup <id>] [--from-digest <hex>]" >&2; exit 2 ;;
   esac
   shift
 done
@@ -184,6 +186,9 @@ echo "==> 1  stopping the QA stack"
 ./tb qa web down --remove-orphans || true
 
 # ---- 2  the restore ---------------------------------------------------------------------------------
+if [ "$SKIP_RESTORE" = 1 ]; then
+  echo "==> 2  restore SKIPPED (--skip-restore): the instance keeps the backup it already holds"
+else
 echo "==> 2  restoring (several minutes)"
 # WAIT ON THE OPERATION, NOT ON THE INSTANCE'S STATE. A restoring instance reports RUNNABLE and
 # even accepts connections partway through -- already authenticating as the ROLES THE BACKUP
@@ -201,6 +206,7 @@ status=$(gcloud sql operations describe "$OP" --project "$PROJECT" --format='val
 err=$(gcloud sql operations describe "$OP" --project "$PROJECT" --format='value(error.errors[0].message)' 2>/dev/null || true)
 [ -z "$err" ] || { echo "the restore reported: $err" >&2; exit 1; }
 echo "    restore DONE; $QA_SQL now carries $PROD_SQL's cluster"
+fi
 
 # ---- 3  QA's own passwords --------------------------------------------------------------------------
 # THE RESTORE BROUGHT PRODUCTION'S ROLES. Roles are cluster-wide, so a backup carries them and their
@@ -217,13 +223,14 @@ SOMA_ROLE=$(u="${QA_SOMA_URL#*://}"; u="${u%%:*}"; printf '%s' "$u")
 SOMA_PW=$(u="${QA_SOMA_URL#*://}"; u="${u#*:}"; printf '%s' "${u%%@*}")
 GATE_PW=$(value_of RUNNER_GATE_DB_PASSWORD "$QA_ENV")
 ADMIN_AS_ROOT="postgresql://postgres:$QA_ROOT_PW@$QA_PRIVATE_IP:5432/postgres?sslmode=require"
+# NOT A `DO $$ ... $$` BLOCK. psql substitutes :'x' before sending, but a dollar-quoted body is
+# passed to the server verbatim -- so `:'g'` inside one arrives as literal text and the server
+# answers `syntax error at or near ":"`. \gexec builds the statement in psql, where the
+# substitution happens, and runs what comes back.
 run_psql "$ADMIN_AS_ROOT" -X -q -v ON_ERROR_STOP=1 -v r="$SOMA_ROLE" -v p="$SOMA_PW" -v g="${GATE_PW:-}" <<'SQL'
 ALTER ROLE :"r" WITH LOGIN PASSWORD :'p';
-DO $$ BEGIN
-  IF :'g' <> '' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'runner_gate') THEN
-    EXECUTE format('ALTER ROLE runner_gate WITH LOGIN PASSWORD %L', :'g');
-  END IF;
-END $$;
+SELECT format('ALTER ROLE runner_gate WITH LOGIN PASSWORD %L', :'g')
+ WHERE :'g' <> '' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'runner_gate')\gexec
 SQL
 echo "    $SOMA_ROLE: reset;  runner_gate: $([ -n "$GATE_PW" ] && echo reset || echo 'left as restored')"
 
