@@ -1,0 +1,34 @@
+# THE QA STACK'S HOSTNAME, served by PRODUCTION'S caddy.
+#
+#   cp compose/caddy/conf.d/qa.caddy.example compose/caddy/conf.d/qa.caddy
+#   ...replace qa.tinybrains.dev below with .env.qa's QA_HOST, in both blocks
+#   docker compose -f docker-compose.prod.yml up -d caddy
+#
+# The literal hostname is written here rather than read from an environment variable on purpose:
+# caddy is production's container and reads production's .env, which has no QA_HOST in it -- and an
+# unset name expands to an empty site address, which is a config error that takes the whole edge
+# down, production included. A name you can read is worth more here than one less place to edit.
+#
+# DNS FIRST. Caddy answers the ACME challenge for this name on :80, so its A record must already
+# point at this machine or the first reload fails the issuance and retries on a backoff.
+#
+# `web-qa` IS THE QA STACK'S WEB CONTAINER, resolved over production's own compose network, which
+# docker-compose.qa.yml joins. It is named `web-qa` and not `web` precisely so this line cannot
+# resolve to production's: Docker's embedded DNS would round-robin between them.
+#
+# 502 HERE MEANS THE QA STACK IS DOWN, and nothing else: production does not depend on it.
+
+qa.tinybrains.dev {
+	import access_log
+	import headers
+	reverse_proxy web-qa:80
+}
+
+# THE QA CONSOLE, on 9443 -- production's is 8443 on its own host, and one caddy cannot publish the
+# same port twice. Add "9443:9443" to caddy's ports in docker-compose.prod.yml when you want it, and
+# bring the QA stack up with `--profile console`. 502 unless that profile is running.
+qa.tinybrains.dev:9443 {
+	import access_log
+	import headers
+	reverse_proxy orion-ui-qa:8080
+}

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# THE ONE COMMAND FOR EVERY ENVIRONMENT ON THIS MACHINE.
+#
+#   devops/tb <dev|qa|prod> <web|runner> <docker compose args...>
+#
+#   devops/tb dev  web    up -d                 the local platform
+#   devops/tb dev  runner up -d --build         a runner for it, built from ../kalam
+#   devops/tb prod web    up -d                 production
+#   devops/tb prod web    --profile console up -d
+#   devops/tb qa   web    up -d                 the QA stack beside it
+#   devops/tb qa   runner --profile admit up -d a QA runner and its admitting runner
+#   devops/tb prod web    logs -f soma
+#
+# WHY A WRAPPER AND NOT A LONGER COMMAND. Three things have to agree on every invocation -- the
+# compose file, the `--env-file` and the compose PROJECT -- and the one that is silent when it is
+# wrong is the project: two projects sharing a name is one REPLACING the other, which is how a QA
+# runner takes production's containers. scripts/lib.sh holds all three, once, and this passes them.
+#
+# A machine-local override (compose/<file>.override.yml, git-ignored) is layered when it exists --
+# compose only auto-loads `docker-compose.override.yml` beside a `docker-compose.yml`, and these
+# files are named otherwise.
+set -euo pipefail
+cd "$(dirname "$0")"
+. scripts/lib.sh
+
+usage() {
+  echo "usage: devops/tb <dev|qa|prod> <web|runner> <docker compose args...>" >&2
+  echo "       devops/tb <dev|qa|prod> <web|runner> --show     print the command instead of running it" >&2
+  exit 2
+}
+
+[ $# -ge 2 ] || usage
+TB_ENV="$1"; TARGET="$2"; shift 2
+case "$TARGET" in web|runner) ;; *) usage ;; esac
+tb_paths
+
+FILE=$(tb_compose "$TARGET")
+PROJECT=$(tb_project "$TARGET")
+case "$TARGET" in
+  web)    ENVF="$TB_WEB_ENV" ;;
+  runner) ENVF="$TB_KALAM_ENV" ;;
+esac
+
+[ -f "$ENVF" ] || { echo "no $ENVF -- that environment has no $TARGET settings on this machine" >&2; exit 1; }
+
+ARGS=(-p "$PROJECT" -f "$FILE")
+OVERRIDE="${FILE%.yml}.override.yml"
+[ -f "$OVERRIDE" ] && ARGS+=(-f "$OVERRIDE")
+ARGS+=(--env-file "$ENVF")
+
+if [ "${1:-}" = "--show" ]; then
+  echo "docker compose ${ARGS[*]} ${*:2}"
+  exit 0
+fi
+exec docker compose "${ARGS[@]}" "$@"

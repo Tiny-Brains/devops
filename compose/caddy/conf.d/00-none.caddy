@@ -1,0 +1,4 @@
+# Deliberately empty. The Caddyfile imports conf.d/*.caddy, and this file is what keeps that glob
+# matching at least one path on a machine that serves nothing but production.
+#
+# To add the QA stack's hostname:  cp qa.caddy.example qa.caddy  and fill in its two names.

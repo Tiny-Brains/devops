@@ -1,0 +1,56 @@
+# DENY BY DEFAULT. This repository sits in a directory that holds every environment's settings and
+# this machine's private trust key, so it does NOT list what to exclude -- it ignores everything and
+# then names the few things that are safe to track. A rule that forgets a file is then a file that
+# stays out, which is the failure you can recover from; the other way round is a secret in a remote's
+# history, which you cannot.
+#
+# WHAT IS TRACKED: the tooling -- tb, scripts/, compose/, examples/ and this README. Those describe
+# how an environment is run.
+# WHAT IS NOT: dev/, qa/ and prod/ -- the environments themselves. Their .env files and keys are
+# per-machine, and `devops/README.md` says the machine that runs an environment owns its copy.
+#
+# Before adding an allow rule, ask what the file would contain on the PRODUCTION machine, not on
+# this one.
+
+# 1. Everything.
+*
+
+# 2. Directories, so git can descend into them and see the allow rules below. This does not track a
+#    directory -- git tracks files -- it only stops the walk being cut off at the top.
+!*/
+
+# 3. The tooling.
+!.gitignore
+!README.md
+!tb
+!scripts/**
+!compose/**
+!examples/**
+
+# 4. AND THEN DENIED AGAIN, whatever any rule above says. Last match wins in git, so these are the
+#    backstop: a future `!dev/**` added in haste still cannot reach a secret through them.
+#    - the environments, whole
+dev/
+qa/
+prod/
+#    - anything that is a settings file or a key, anywhere
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.sig
+keys/
+secrets/
+#    - a machine's own compose layer and its Caddy site, which name one host and are made from the
+#      committed .example beside them
+*.override.yml
+compose/caddy/conf.d/*.caddy
+!compose/caddy/conf.d/00-none.caddy
+
+# 5. The ordinary noise.
+.DS_Store
+*.log
+*.swp
