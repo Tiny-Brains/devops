@@ -10,8 +10,10 @@
 # WHAT IT SHARES WITH PRODUCTION, and why each one is safe to share:
 #
 #   the VM          two compose projects, no published ports here at all
-#   Postgres        the same server, two databases of its own. The gate role is cluster-wide and
-#                   its password is therefore production's -- see qa-db.sh, which enforces that.
+#   (NOT Postgres)  it had one, and that is what broke: QA's five clocks over a full copy of
+#                   production's ladder pinned the shared db-f1-micro, and PRODUCTION's own queries
+#                   went to seconds and its clocks timed out. QA has `tinybrains-qa-pg` now. Where a
+#                   deployment does share one, qa-db.sh enforces the shared gate password.
 #   caddy           production's, through compose/caddy/conf.d/qa.caddy: this file publishes
 #                   nothing, and `web-qa` is reachable on production's network by that name.
 #   the trust key   keys/tinybrains-dev.pem, one root per machine. The SIGNATURES are not shared:
@@ -26,7 +28,9 @@
 #                   Two containers, ~10 MB each. Never point this at production's.
 #   the buckets     a QA runner writes replays and reads models by digest; on production's buckets
 #                   the object it overwrites is a competitor's.
-#   the databases   soma_qa and orion_state_qa, never a schema inside production's. The migrations
+#   the databases   soma_qa and orion_state_qa on QA's OWN server, never a schema inside
+#                   production's, and -- since the load, not the names, was the problem -- never its
+#                   server either. The migrations
 #                   are unqualified against `public` and bootstrap records its digest in
 #                   public.soma_schema -- a search_path split would be a schema rewrite.
 #   the OAuth App   the callback is per-host, and QA's admin list is the guest list.

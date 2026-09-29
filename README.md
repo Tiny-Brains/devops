@@ -146,9 +146,15 @@ a runner key minted on QA, never production's.
   `cat` into it instead, and a new writer must too.
 - **`grep -v` exits 1 when every line matched**, which under `set -e` aborts a script mid-rewrite.
   Every read-modify-write here ends `|| true` for that reason.
-- **QA and production share one Postgres server and therefore one `runner_gate` role.** Its password
-  is cluster-wide and soma's bootstrap resets it on every start, so `qa/web/.env` and `prod/web/.env`
-  must carry the same `RUNNER_GATE_DB_PASSWORD`. `qa-db.sh` refuses to run when they differ.
+- **QA has a Postgres server of its own, and the reason is CPU, not connections.** The two shared
+  one `db-f1-micro` until QA first ran a full copy of production's ladder on it: QA's five clocks
+  against 10k matches took the instance down to seconds per query, and *production* -- the same
+  instance -- logged 75 slow statements a minute and timed its own clocks out. Connections were
+  never the binding constraint; the shared vCPU was. `tinybrains-qa-pg` is QA's.
+- **Where QA and production DO share a server, they share the `runner_gate` role.** Roles are
+  cluster-wide and soma's bootstrap resets that password on every start, so both `.env` files must
+  then carry the same `RUNNER_GATE_DB_PASSWORD` or a QA bring-up rewrites production's.
+  `qa-db.sh` compares the two hosts and only enforces it when they are one.
 - **QA and production must not share a Redis.** Soma's clocks are Orion cluster singletons and
   `[cluster] redis_url` has no key prefix: one Redis across both elects one pair clock over four
   nodes, and production's ladder goes quietly idle.
@@ -166,7 +172,7 @@ a runner key minted on QA, never production's.
 | | Runs | Its state |
 |---|---|---|
 | **this laptop** | the dev stack and a dev runner | `dev/` is real; `qa/` and `prod/` are reference copies |
-| **`tinybrains-host`** (GCP) | production, and QA beside it | `prod/` and `qa/` are real, and authoritative |
+| **`tinybrains-host`** (GCP) | production, and QA beside it (on its own Cloud SQL) | `prod/` and `qa/` are real, and authoritative |
 | **the Mac mini** | the production and QA runners | `prod/kalam/` and `qa/kalam/`, with keys copied from the VM |
 
 ## Backing it up

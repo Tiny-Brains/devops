@@ -12,12 +12,13 @@
 #
 # WHAT IT REFUSES, and each one is a production outage it is standing in front of:
 #
-#   the gate password       qa/web/.env's RUNNER_GATE_DB_PASSWORD must equal prod/web/.env's. `runner_gate` is a
-#                           cluster-wide ROLE shared by both databases, and bootstrap runs
-#                           `ALTER ROLE runner_gate WITH LOGIN PASSWORD` on every bring-up. A QA
-#                           stack with its own value rewrites production's gate password at its
-#                           first start; production's runners then fail to connect, and nothing in
-#                           production's logs names QA.
+#   the gate password       ONLY WHEN THE TWO SHARE A SERVER: qa/web/.env's RUNNER_GATE_DB_PASSWORD
+#                           must then equal prod/web/.env's, because `runner_gate` is a cluster-wide
+#                           ROLE and bootstrap runs `ALTER ROLE runner_gate WITH LOGIN PASSWORD` on
+#                           every bring-up -- a QA stack with its own value rewrites production's
+#                           gate password at its first start, production's runners then fail to
+#                           connect, and nothing in production's logs names QA. Where QA has a
+#                           server of its own the role is its own and nothing needs to match.
 #   the same database       qa/web/.env's SOMA_DB_URL or ORION_STATE_DB_URL naming a database prod/web/.env also
 #                           names. That is not a QA stack, it is a second node writing production's
 #                           ladder under a candidate schema.
@@ -76,22 +77,41 @@ for pair in "$QA_SOMA:$PROD_SOMA" "$QA_SOMA:$PROD_STATE" "$QA_STATE:$PROD_SOMA" 
   fi
 done
 
+# THE GATE PASSWORD IS A CLUSTER-WIDE FACT, so whether it must match depends on whether the two
+# environments are on ONE SERVER. `runner_gate` is a ROLE, and roles belong to a cluster: where QA
+# and production share a server they share the role, and soma's bootstrap runs
+#     ALTER ROLE runner_gate WITH LOGIN PASSWORD ...
+# on every bring-up -- so a QA stack holding its own value would rewrite PRODUCTION'S gate password,
+# and every production runner would fail to connect with nothing in production's logs naming QA.
+# Where QA has a server of its own, that role is its own too, and a shared password would be
+# production's secret kept somewhere it is not needed.
+host_of() {   # everything between the @ and the path, so host:port
+  local u="${1#*@}"; printf '%s' "${u%%/*}"
+}
+QA_HOSTPORT=$(host_of "$QA_SOMA_URL")
+PROD_HOSTPORT=$(host_of "$(value_of SOMA_DB_URL "$PROD_ENV")")
 QA_GATE_PW=$(value_of RUNNER_GATE_DB_PASSWORD "$QA_ENV")
 PROD_GATE_PW=$(value_of RUNNER_GATE_DB_PASSWORD "$PROD_ENV")
-if [ "$QA_GATE_PW" != "$PROD_GATE_PW" ]; then
-  echo "REFUSED: RUNNER_GATE_DB_PASSWORD differs between $QA_ENV and $PROD_ENV." >&2
-  echo >&2
-  echo "\`runner_gate\` is a PostgreSQL ROLE, and roles are cluster-wide: one role serves both" >&2
-  echo "databases on this server. soma's bootstrap runs" >&2
-  echo "    ALTER ROLE runner_gate WITH LOGIN PASSWORD ..." >&2
-  echo "on every bring-up, so starting QA with a different value would rewrite PRODUCTION'S gate" >&2
-  echo "password -- every production runner then fails to connect, and production's logs say" >&2
-  echo "nothing about QA." >&2
-  echo >&2
-  echo "  scripts/setup/qa-secrets.sh     copies the value across" >&2
-  exit 1
+if [ "$QA_HOSTPORT" = "$PROD_HOSTPORT" ]; then
+  if [ "$QA_GATE_PW" != "$PROD_GATE_PW" ]; then
+    echo "REFUSED: RUNNER_GATE_DB_PASSWORD differs between $QA_ENV and $PROD_ENV," >&2
+    echo "and both name the same server ($QA_HOSTPORT), where \`runner_gate\` is ONE role." >&2
+    echo >&2
+    echo "soma's bootstrap runs \`ALTER ROLE runner_gate WITH LOGIN PASSWORD\` on every bring-up, so" >&2
+    echo "starting QA with a different value would rewrite PRODUCTION'S gate password -- every" >&2
+    echo "production runner then fails to connect, and production's logs say nothing about QA." >&2
+    echo >&2
+    echo "  scripts/setup/qa-secrets.sh     copies the value across" >&2
+    exit 1
+  fi
+  echo "==> checks passed: one server, separate databases, one shared runner_gate password"
+else
+  if [ -n "$PROD_GATE_PW" ] && [ "$QA_GATE_PW" = "$PROD_GATE_PW" ]; then
+    echo "==> note: QA is on its own server ($QA_HOSTPORT) but carries production's gate password."
+    echo "    It does no harm and it is not needed -- QA's \`runner_gate\` is QA's own role now."
+  fi
+  echo "==> checks passed: QA has a server of its own ($QA_HOSTPORT), so no role is shared"
 fi
-echo "==> checks passed: separate databases, one shared runner_gate password"
 
 psql_admin() { run_psql -X "$ADMIN_DB" -q -v ON_ERROR_STOP=1 "$@"; }
 
