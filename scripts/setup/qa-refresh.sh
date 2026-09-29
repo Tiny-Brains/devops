@@ -184,19 +184,23 @@ echo "==> 1  stopping the QA stack"
 ./tb qa web down --remove-orphans || true
 
 # ---- 2  the restore ---------------------------------------------------------------------------------
-echo "==> 2  restoring (several minutes; the instance is unavailable throughout)"
-gcloud sql backups restore "$BACKUP_ID" \
-  --restore-instance "$QA_SQL" --backup-instance "$PROD_SQL" \
-  --project "$PROJECT" --quiet 2>&1 | sed 's/^/    /'
-
-echo "==> waiting for $QA_SQL"
-for i in $(seq 1 60); do
-  state=$(gcloud sql instances describe "$QA_SQL" --project "$PROJECT" --format='value(state)' 2>/dev/null || true)
-  [ "$state" = "RUNNABLE" ] && break
-  [ "$i" -lt 60 ] || { echo "$QA_SQL did not come back (last state: ${state:-unknown})" >&2; exit 1; }
-  sleep 10
-done
-echo "    $QA_SQL is RUNNABLE"
+echo "==> 2  restoring (several minutes)"
+# WAIT ON THE OPERATION, NOT ON THE INSTANCE'S STATE. A restoring instance reports RUNNABLE and
+# even accepts connections partway through -- already authenticating as the ROLES THE BACKUP
+# CARRIES, which are production's. A wait that watched the state would therefore return early, and
+# step 3 would reset passwords that the rest of the restore then overwrote: QA's own URLs would
+# fail against its own instance, with nothing to show why.
+OP=$(gcloud sql backups restore "$BACKUP_ID" \
+       --restore-instance "$QA_SQL" --backup-instance "$PROD_SQL" \
+       --project "$PROJECT" --quiet --async --format='value(name)' 2>&1 | tail -1)
+[ -n "$OP" ] || { echo "the restore was not accepted" >&2; exit 1; }
+echo "    operation $OP"
+gcloud sql operations wait "$OP" --project "$PROJECT" --timeout 3600 2>&1 | sed 's/^/    /'
+status=$(gcloud sql operations describe "$OP" --project "$PROJECT" --format='value(status)' 2>/dev/null || true)
+[ "$status" = "DONE" ] || { echo "the restore did not finish (status: ${status:-unknown})" >&2; exit 1; }
+err=$(gcloud sql operations describe "$OP" --project "$PROJECT" --format='value(error.errors[0].message)' 2>/dev/null || true)
+[ -z "$err" ] || { echo "the restore reported: $err" >&2; exit 1; }
+echo "    restore DONE; $QA_SQL now carries $PROD_SQL's cluster"
 
 # ---- 3  QA's own passwords --------------------------------------------------------------------------
 # THE RESTORE BROUGHT PRODUCTION'S ROLES. Roles are cluster-wide, so a backup carries them and their
