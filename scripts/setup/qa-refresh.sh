@@ -129,18 +129,39 @@ SOMA_IMAGE=$(value_of SOMA_IMAGE "$QA_ENV")
 WORK=$(mktemp -d); chmod 700 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
-# BOTH of psql and pg_dump, or neither: a machine with half a client set would dump natively and
-# restore in the image, where the dump file is at another path. DUMPF is that file AS THE RUNNER
-# SEES IT, which is the only difference between the two branches.
-if command -v psql > /dev/null && command -v pg_dump > /dev/null; then
-  run_psql()       { psql "$@"; }
-  run_pg_dump()    { pg_dump "$@"; }
-  DUMPF="$WORK/prod.dump"
+# THE CLIENTS ARE CHOSEN SEPARATELY, because they tolerate a version gap differently. `psql` talks
+# to a newer server happily; `pg_dump` REFUSES one ("aborting because of server version mismatch"),
+# and a production VM whose distribution ships PostgreSQL 15 against a managed PostgreSQL 16 is the
+# ordinary case, not a broken machine. So the native pg_dump is used only when it is at least the
+# server's major, and $PSQL_IMAGE -- pinned to the major the platform runs -- otherwise.
+#
+# The dump file therefore has two names: the one the dumper writes and the one the restorer reads.
+# They differ whenever one of the two is a container and the other is not.
+DUMP_HOST="$WORK/prod.dump"
+if command -v psql > /dev/null; then
+  run_psql() { psql "$@"; }
+  DUMP_READ="$DUMP_HOST"
 else
-  # $WORK is mounted here too: the restore is `psql -f`, and the dump file must be visible to it.
-  run_psql()       { docker run --rm -i --network "$DOCKER_NETWORK" -v "$WORK:/w" "$PSQL_IMAGE" psql "$@"; }
-  run_pg_dump()    { docker run --rm -i --network "$DOCKER_NETWORK" -v "$WORK:/w" "$PSQL_IMAGE" pg_dump "$@"; }
-  DUMPF=/w/prod.dump
+  run_psql() { docker run --rm -i --network "$DOCKER_NETWORK" -v "$WORK:/w" "$PSQL_IMAGE" psql "$@"; }
+  DUMP_READ=/w/prod.dump
+fi
+
+use_image_dump=1
+if command -v pg_dump > /dev/null; then
+  client_major=$(pg_dump --version | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+  server_major=$(run_psql -X -At "$PROD_SOMA_URL" -c 'SHOW server_version_num' 2>/dev/null | cut -c1-2 | sed 's/^0//')
+  if [ -n "$client_major" ] && [ -n "$server_major" ] && [ "$client_major" -ge "$server_major" ] 2>/dev/null; then
+    use_image_dump=0
+  else
+    echo "    pg_dump here is ${client_major:-?} and the server is ${server_major:-?}: using $PSQL_IMAGE to dump"
+  fi
+fi
+if [ "$use_image_dump" = 0 ]; then
+  run_pg_dump() { pg_dump "$@"; }
+  DUMP_WRITE="$DUMP_HOST"
+else
+  run_pg_dump() { docker run --rm -i --network "$DOCKER_NETWORK" -v "$WORK:/w" "$PSQL_IMAGE" pg_dump "$@"; }
+  DUMP_WRITE=/w/prod.dump
 fi
 
 digest_of() { run_psql -X "$1" -At -c "SELECT coalesce((SELECT digest FROM public.soma_schema), '')" 2>/dev/null || true; }
@@ -212,14 +233,14 @@ PROD_ENV="$PROD_ENV" QA_ENV="$QA_ENV" scripts/setup/qa-db.sh
 #
 # --single-transaction: a failure leaves QA's database empty rather than half production's.
 echo "==> 3  copying $PROD_SOMA (a consistent snapshot; production keeps serving)"
-run_pg_dump --no-owner -f "$DUMPF" "$PROD_SOMA_URL" 2>&1 | sed 's/^/    /' || {
+run_pg_dump --no-owner -f "$DUMP_WRITE" "$PROD_SOMA_URL" 2>&1 | sed 's/^/    /' || {
   echo "the dump of production failed -- nothing in QA has been filled" >&2; exit 1; }
-echo "    dump  $(du -h "$WORK/prod.dump" | cut -f1)"
+echo "    dump  $(du -h "$DUMP_HOST" | cut -f1)"
 sed -i.bak "s/set_config('search_path', '', false)/set_config('search_path', 'public, pg_catalog', false)/g" \
-  "$WORK/prod.dump" && rm -f "$WORK/prod.dump.bak"
+  "$DUMP_HOST" && rm -f "$DUMP_HOST.bak"
 # -o /dev/null: a dump's own `set_config` and `setval` calls print result rows, and a page of them
 # between the dump's size and the row counts is a page nobody reads. Errors are on stderr.
-run_psql -X -q -o /dev/null -v ON_ERROR_STOP=1 --single-transaction -f "$DUMPF" "$QA_SOMA_URL" 2>&1 | sed 's/^/    /'
+run_psql -X -q -o /dev/null -v ON_ERROR_STOP=1 --single-transaction -f "$DUMP_READ" "$QA_SOMA_URL" 2>&1 | sed 's/^/    /'
 
 COPIED=$(digest_of "$QA_SOMA_URL")
 [ "$COPIED" = "$LIVE_DIGEST" ] || {
