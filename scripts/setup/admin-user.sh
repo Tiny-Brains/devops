@@ -3,7 +3,7 @@
 #
 #   scripts/setup/admin-user.sh <github-login>            # look the id up and add it to .env
 #   scripts/setup/admin-user.sh --print <github-login>    # print it only, for a deployment's own secrets
-#   scripts/setup/admin-user.sh --env-file .env.qa <login>   # a second stack on this machine
+#   scripts/setup/admin-user.sh --env-file qa/web/.env <login>   # a second stack on this machine
 #
 # WHY THE ID. Soma makes an account an admin at sign-in when its identity's `provider:subject` is in
 # SOMA_ADMIN_IDS. A login is the wrong key: a provider frees a renamed login for anyone to register, so

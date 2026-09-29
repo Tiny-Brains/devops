@@ -3,8 +3,8 @@
 #
 #   scripts/setup/qa-secrets.sh [--force]
 #
-# Writes into .env.qa, which docker-compose.qa.yml reads. Run it on the production machine, after
-# `cp .env.qa.example .env.qa` and before scripts/setup/qa-db.sh.
+# Writes into qa/web/.env, which compose/web.qa.yml reads. Run it on the production machine, after
+# `cp examples/web.qa.env.example qa/web/.env` and before scripts/setup/qa-db.sh.
 #
 #   ORION_ADMIN_KEY          minted, QA's own. 64 hex; production refuses a plaintext key under 32.
 #   SOMA_SESSION_SECRET      minted, QA's own. A shared one would make a QA-issued session a
@@ -14,7 +14,7 @@
 #   TB_TRUST_PUBLIC_KEY      COPIED from .env. One machine, one Ed25519 trust root: a signature
 #                            belongs to whoever holds the key, not to a stack. The signatures
 #                            themselves are not shared -- QA's images carry the candidate's engine,
-#                            so they are signed into keys/signatures-qa/ (this script prints the
+#                            so they are signed into qa/web/keys/signatures/ (this script prints the
 #                            command) and one directory holding two digests under
 #                            `tb-ants.wasm.sig` is what sign-plugins.sh refuses by name.
 #
@@ -29,7 +29,7 @@
 #                            touches the server.
 #
 # Nothing here reads or writes a bucket, a database or a GitHub App: those are filled in by hand
-# from .env.qa's comments, because each one is created in someone else's dashboard.
+# from examples/web.qa.env.example's comments, because each one is created in someone else's dashboard.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -42,11 +42,11 @@ command -v openssl > /dev/null || { echo "openssl is required" >&2; exit 1; }
 
 [ -f "$QA_ENV" ] || {
   echo "no $QA_ENV -- start from the template:" >&2
-  echo "  cp .env.qa.example $QA_ENV" >&2
+  echo "  cp examples/web.qa.env.example $QA_ENV" >&2
   exit 1
 }
 [ -f "$PROD_ENV" ] || {
-  echo "no $PROD_ENV -- this script runs ON THE PRODUCTION MACHINE, where .env is the live" >&2
+  echo "no $PROD_ENV -- this script runs ON THE PRODUCTION MACHINE, where it is the live" >&2
   echo "deployment's environment. It reads the trust key and the gate password from it." >&2
   exit 1
 }
@@ -119,5 +119,5 @@ echo "  R2_ACCESS_KEY / R2_SECRET_KEY   a SECOND R2 token, scoped to those two b
 echo
 echo "Then:"
 echo "  scripts/setup/qa-db.sh                                       soma_qa + orion_state_qa"
-echo "  SIG_OUT=keys/signatures-qa ENV_FILE=$QA_ENV scripts/setup/sign-plugins.sh"
-echo "  docker compose -f docker-compose.qa.yml --env-file $QA_ENV up -d"
+echo "  TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem"
+echo "  scripts/setup/qa-refresh.sh --yes --up            production's data, migrated, and the stack"

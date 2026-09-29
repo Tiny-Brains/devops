@@ -36,7 +36,10 @@
 # images carry the candidate's engine and the check just above would (rightly) refuse two digests
 # under one `tb-ants.wasm.sig`:
 #
-#   SIG_OUT=keys/signatures-qa ENV_FILE=.env.qa scripts/setup/sign-plugins.sh
+#   TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem
+#
+# -- TB_ENV=qa puts both the output directory and the image names where lib.sh says QA's are, and
+# the key is named because QA has none of its own: one machine, one trust root, production's.
 #
 # Re-run after a new Soma or Kalam image, and after trust-keygen.sh --force. A stale signature is
 # not silent: `[packages] apply` quarantines the channels that call the plugin and stops the node.

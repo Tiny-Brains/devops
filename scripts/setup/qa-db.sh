@@ -12,13 +12,13 @@
 #
 # WHAT IT REFUSES, and each one is a production outage it is standing in front of:
 #
-#   the gate password       .env.qa's RUNNER_GATE_DB_PASSWORD must equal .env's. `runner_gate` is a
+#   the gate password       qa/web/.env's RUNNER_GATE_DB_PASSWORD must equal prod/web/.env's. `runner_gate` is a
 #                           cluster-wide ROLE shared by both databases, and bootstrap runs
 #                           `ALTER ROLE runner_gate WITH LOGIN PASSWORD` on every bring-up. A QA
 #                           stack with its own value rewrites production's gate password at its
 #                           first start; production's runners then fail to connect, and nothing in
 #                           production's logs names QA.
-#   the same database       .env.qa's SOMA_DB_URL or ORION_STATE_DB_URL naming a database .env also
+#   the same database       qa/web/.env's SOMA_DB_URL or ORION_STATE_DB_URL naming a database prod/web/.env also
 #                           names. That is not a QA stack, it is a second node writing production's
 #                           ladder under a candidate schema.
 #   a live QA database      --drop stops if the QA stack still has sessions open, rather than
@@ -43,12 +43,13 @@ value_of() { { grep -E "^$1=.+" "$2" 2>/dev/null || true; } | tail -1 | cut -d= 
 
 # `psql` when the machine has one, otherwise the image -- which is how SQL is run against Cloud SQL
 # from the production VM. --network host so a private-IP instance is reachable exactly as the
-# containers reach it.
+# containers reach it; DOCKER_NETWORK points a rehearsal at a local stack's Postgres, which
+# publishes no port (`container:<name>`), and cutover.sh and qa-refresh.sh take the same name.
 if command -v psql > /dev/null; then
   run_psql() { psql "$@"; }
 else
   command -v docker > /dev/null || { echo "neither psql nor docker is available" >&2; exit 1; }
-  run_psql() { docker run --rm -i --network host postgres:16-alpine psql "$@"; }
+  run_psql() { docker run --rm -i --network "${DOCKER_NETWORK:-host}" postgres:16-alpine psql "$@"; }
 fi
 
 ADMIN_DB=$(value_of SOMA_ADMIN_DB_URL "$QA_ENV")
@@ -104,7 +105,7 @@ if [ "$DROP" = 1 ]; then
     if [ "${open:-0}" -gt 0 ]; then
       echo "REFUSED: $db still has $open connection(s) open." >&2
       echo "Stop the QA stack first:" >&2
-      echo "  docker compose -f docker-compose.qa.yml --env-file $QA_ENV down" >&2
+      echo "  ./tb qa web down" >&2
       exit 1
     fi
     psql_admin -c "DROP DATABASE $db"
@@ -112,7 +113,7 @@ if [ "$DROP" = 1 ]; then
   done
   echo "==> the QA databases are gone. The runner_gate ROLE stays: it is production's."
   echo "    Still to remove by hand: the two R2 buckets and their token, the QA OAuth App, the"
-  echo "    DNS record, compose/caddy/conf.d/qa.caddy, and keys/signatures-qa/."
+  echo "    DNS record, compose/caddy/conf.d/qa.caddy, and qa/web/keys/signatures/."
   exit 0
 fi
 
@@ -148,17 +149,17 @@ done
 echo "==> both QA databases exist and their URLs connect"
 
 # What the server's connection budget now looks like. The f1-micro allows 60; production's node
-# takes 27 and .env.qa's pools take 12.
+# takes 27 and qa/web/.env's pools take 12.
 used=$(run_psql -X "$ADMIN_DB" -At -c 'SELECT count(*) FROM pg_stat_activity') || used=?
 max=$(run_psql -X "$ADMIN_DB" -At -c 'SHOW max_connections') || max=?
 echo "    connections in use now: $used of $max"
 
 echo
 echo "Next:"
-echo "  SIG_OUT=keys/signatures-qa ENV_FILE=$QA_ENV scripts/setup/sign-plugins.sh"
-echo "  docker compose -f docker-compose.qa.yml --env-file $QA_ENV up -d"
+echo "  TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem"
+echo "  scripts/setup/qa-refresh.sh --yes --up"
 echo
-echo "The schema is applied by QA's own soma-bootstrap, from the CANDIDATE image's migrations."
-echo "Restoring production data into $QA_SOMA is a separate step, and the schema digest is why:"
-echo "a dump carries production's public.soma_schema row, and a candidate whose migrations differ"
-echo "REFUSES it by name. README, *A QA stack beside production*, has the order."
+echo "These two databases are EMPTY. QA is meant to hold production's rows, and qa-refresh.sh is"
+echo "what puts them there -- it drops these again, copies production in, and runs the candidate's"
+echo "own migrations over the copy. Bringing the stack up on empty databases instead is a valid"
+echo "stack and a test of the code only: the rows that break a release are a season's own."

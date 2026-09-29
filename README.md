@@ -44,7 +44,8 @@ devops/
   tb                    the one command
   scripts/
     lib.sh              which environment, and where its files are
-    setup/              init, admin-key, admin-user, trust-keygen, sign-plugins, qa-secrets, qa-db
+    setup/              init, admin-key, admin-user, trust-keygen, sign-plugins,
+                        qa-secrets, qa-db, qa-refresh
   compose/
     web.yml   web.prod.yml   web.qa.yml
     runner.yml   runner.prod.yml        (prod and QA share this one, under different projects)
@@ -85,6 +86,58 @@ in particular used to ignore the file it was told to use and rewrite the default
 Production and QA have their own sections in the guides: `examples/web.prod.env.example` and
 `examples/web.qa.env.example` explain every blank, and `scripts/setup/qa-secrets.sh` and
 `qa-db.sh` do the parts that must not be done by hand.
+
+## A QA stack beside production
+
+**QA is the candidate release running on production's rows.** It shares the VM, the Postgres server,
+the edge and the trust key with production; it has its own databases, buckets, Redis, OAuth App and
+signatures. `compose/web.qa.yml`'s header says which of those is safe to share and why, one line
+each — read it before changing any of them.
+
+**Once, when the stack is first built** (on the VM, everything relative to `devops/`):
+
+```sh
+cp examples/web.qa.env.example qa/web/.env   # then fill in what its comments ask for
+scripts/setup/qa-secrets.sh                  # three secrets minted, two copied from production
+scripts/setup/qa-db.sh                       # soma_qa + orion_state_qa on production's server
+cp compose/caddy/conf.d/qa.caddy.example compose/caddy/conf.d/qa.caddy   # then the hostname, twice
+./tb prod web up -d caddy                    # production's edge picks up the QA hostname
+```
+
+The blanks that are made in someone else's dashboard — the DNS A record, the second GitHub OAuth
+App, the two `-qa` buckets and their own R2 token — are named in `examples/web.qa.env.example`, and
+`qa-secrets.sh` prints the list again when it finishes.
+
+**Every time the candidate changes**, which is the whole of a QA deploy:
+
+```sh
+# qa/web/.env: SOMA_IMAGE and WEB_IMAGE to the candidate, both from ONE ants release
+TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem
+scripts/setup/qa-refresh.sh --yes --up
+```
+
+`qa-refresh.sh` **is** the deploy: it stops QA, drops QA's databases, copies production's live
+database in as it stands, runs the candidate's own migrations over that copy (soma's
+`scripts/cutover/`, from a soma checkout at the candidate's tag), copies production's models bucket
+into QA's, and brings the stack up. Run it with no flags first — that prints every step and every
+refusal and changes nothing.
+
+**Production is only ever read.** The one connection it opens to production is a `pg_dump`, which is
+consistent and takes no lock a competitor would feel. Everything the script can get wrong in the
+other direction — one database, one bucket, one session secret, a drifted gate password — is a
+refusal with production's name on it.
+
+**Why the data is copied rather than seeded.** A QA stack on an empty database tests the code and
+none of the data. The rows that break a release are the ones a season has accumulated — a settled
+version, a match half claimed, a competitor whose manifest predates a rule — and running the
+release's migration over them here is the rehearsal for running it on production.
+
+**What QA does not get.** Replays are not copied: they are the bulk of the bytes and a QA match
+writes its own, so a replay from before the refresh 404s in QA's viewer. `orion_state` is not copied
+either — Orion's state is a node's own, and QA's node rebuilds it from the package at its boot
+apply. And a QA **runner** is a separate machine's job (`./tb qa runner up -d` on the Mac mini), with
+a runner key minted on QA, never production's.
+
 
 ## Invariants
 

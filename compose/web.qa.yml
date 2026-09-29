@@ -1,11 +1,11 @@
 # A QA PLATFORM BESIDE PRODUCTION, on the same machine. The candidate release, with production's
 # data restored into databases of its own, for a few named developers to use.
 #
-#   cp .env.qa.example .env.qa               # README, *A QA stack beside production*, says how
-#   ./scripts/setup/qa-secrets.sh            # the five secrets, one of them copied from production
-#   ./scripts/setup/qa-db.sh                 # soma_qa + orion_state_qa on the production server
-#   ./scripts/setup/sign-plugins.sh          # SIG_OUT=keys/signatures-qa ENV_FILE=.env.qa
-#   docker compose -f docker-compose.qa.yml --env-file .env.qa up -d
+#   cp examples/web.qa.env.example qa/web/.env          # README, *A QA stack beside production*, says how
+#   scripts/setup/qa-secrets.sh                         # the five secrets, one of them copied from production
+#   scripts/setup/qa-db.sh                              # soma_qa + orion_state_qa on the production server
+#   TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem
+#   scripts/setup/qa-refresh.sh --yes --up              # production's rows, migrated, then up
 #
 # WHAT IT SHARES WITH PRODUCTION, and why each one is safe to share:
 #
@@ -31,15 +31,15 @@
 #                   public.soma_schema -- a search_path split would be a schema rewrite.
 #   the OAuth App   the callback is per-host, and QA's admin list is the guest list.
 #
-# WHAT DIFFERS FROM docker-compose.prod.yml, beyond the names: no caddy and no ports, `web-qa`
+# WHAT DIFFERS FROM compose/web.prod.yml, beyond the names: no caddy and no ports, `web-qa`
 # instead of `web` (a service named `web` on production's network would make Docker's DNS
 # round-robin production's browsers between the two stacks), the console on 9443, and the sizing in
-# .env.qa rather than passed through empty -- QA's numbers are chosen, not defaulted.
+# qa/web/.env rather than passed through empty -- QA's numbers are chosen, not defaulted.
 #
 # TEARDOWN IS FOUR COMMANDS, and nothing QA-only lives inside a production resource:
-#   docker compose -f docker-compose.qa.yml --env-file .env.qa down -v
+#   ./tb qa web down -v
 #   scripts/setup/qa-db.sh --drop
-#   rm compose/caddy/conf.d/qa.caddy && docker compose -f docker-compose.prod.yml up -d caddy
+#   rm compose/caddy/conf.d/qa.caddy && ./tb prod web up -d caddy
 #   ...then delete the two R2 buckets, the R2 token, the OAuth App and the DNS record.
 
 name: tinybrains-qa
@@ -72,7 +72,7 @@ x-object-store: &object-store
 
 # CHOSEN, NOT DEFAULTED. Production passes these through empty so the image's defaults hold; QA sets
 # them, because the whole reason QA fits on this machine is that its pools and its heap are smaller.
-# .env.qa explains the 12-connection budget.
+# qa/web/.env explains the 12-connection budget.
 x-node-sizing: &node-sizing
   SOMA_DB_MAX_CONNECTIONS: ${SOMA_DB_MAX_CONNECTIONS:-4}
   SOMA_GATE_DB_MAX_CONNECTIONS: ${SOMA_GATE_DB_MAX_CONNECTIONS:-2}
@@ -141,7 +141,7 @@ services:
   #
   # AND IT WILL RESET THE runner_gate PASSWORD FOR THE WHOLE SERVER. The role is cluster-wide;
   # `ALTER ROLE runner_gate WITH LOGIN PASSWORD` runs on every bring-up. qa-db.sh refuses to
-  # proceed unless .env.qa's value matches .env's, which is why that check is a precondition of
+  # proceed unless qa/web/.env's value matches prod/web/.env's, which is why that check is a precondition of
   # this service rather than a line in a README.
   soma-bootstrap:
     <<: *soma-image
@@ -167,7 +167,7 @@ services:
         condition: service_healthy
     volumes:
       # QA'S OWN signatures, because QA's images carry the candidate's engine:
-      #   SIG_OUT=keys/signatures-qa ENV_FILE=.env.qa ./scripts/setup/sign-plugins.sh
+      #   TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem
       - ${SIG_DIR:-../qa/web/keys/signatures}:/sig:ro
     environment:
       <<: [*trust, *object-store, *orion-logging, *node-sizing]
@@ -219,7 +219,7 @@ services:
           memory: ${SOMA_MEMORY:-512m}
 
   # QA's console, behind QA's sign-in, on 9443.
-  #   docker compose -f docker-compose.qa.yml --env-file .env.qa --profile console up -d
+  #   ./tb qa web --profile console up -d
   orion-ui-qa:
     image: ghcr.io/goplasmatic/orion-ui:${ORION_UI_VERSION:-1.9.1}
     profiles: [console]
