@@ -18,7 +18,8 @@
 #                            command) and one directory holding two digests under
 #                            `tb-ants.wasm.sig` is what sign-plugins.sh refuses by name.
 #
-#   RUNNER_GATE_DB_PASSWORD  COPIED from .env, and it MUST STAY COPIED.
+#   RUNNER_GATE_DB_PASSWORD  COPIED from production ONLY WHERE THE TWO SHARE A POSTGRES SERVER,
+#                            and where they do it MUST STAY COPIED.
 #                            `runner_gate` is a PostgreSQL ROLE and roles are cluster-wide: QA's
 #                            databases and production's live on one server and share one role.
 #                            soma's bootstrap runs `ALTER ROLE runner_gate WITH LOGIN PASSWORD` on
@@ -45,11 +46,12 @@ command -v openssl > /dev/null || { echo "openssl is required" >&2; exit 1; }
   echo "  cp examples/web.qa.env.example $QA_ENV" >&2
   exit 1
 }
-[ -f "$PROD_ENV" ] || {
-  echo "no $PROD_ENV -- this script runs ON THE PRODUCTION MACHINE, where it is the live" >&2
-  echo "deployment's environment. It reads the trust key and the gate password from it." >&2
-  exit 1
-}
+# PRODUCTION'S FILE IS OPTIONAL, AND ON A QA MACHINE IT IS ABSENT ON PURPOSE. QA owns its own
+# trust key, its own Postgres and therefore its own `runner_gate` role; there is nothing of
+# production's for it to copy. The copying path below is only for a QA stack that still shares a
+# machine and a Postgres server with production.
+STANDALONE=1
+if [ -f "$PROD_ENV" ]; then STANDALONE=0; fi
 
 # A VALUE, not the name: the template declares every name with an empty value, so `^NAME=` matches
 # a blank the same as a filled one -- the bug admin-key.sh carries a comment about.
@@ -65,18 +67,43 @@ put() {   # $1 name, $2 value -- replace in place or append
   printf '%s=%s\n' "$name" "$val" >> "$QA_ENV"
 }
 
-# ---- the two that come from production ------------------------------------------------------------
-TRUST=$(value_of TB_TRUST_PUBLIC_KEY "$PROD_ENV")
-GATE=$(value_of RUNNER_GATE_DB_PASSWORD "$PROD_ENV")
+# ---- what comes from production, where there is a production here at all ----------------------------
+if [ "$STANDALONE" = 1 ]; then
+  echo "==> QA is standalone: no $PROD_ENV on this machine, so nothing is copied"
+  # The trust root is QA's own, and it is not minted here -- trust-keygen.sh writes both halves,
+  # because the private one has to exist before `plugin pubkey` can name the public one.
+  if [ -z "$(value_of TB_TRUST_PUBLIC_KEY "$QA_ENV")" ]; then
+    echo "    TB_TRUST_PUBLIC_KEY is empty -- QA signs with its own key, so mint it first:" >&2
+    echo "      scripts/setup/trust-keygen.sh --env qa" >&2
+    exit 1
+  fi
+  echo "    TB_TRUST_PUBLIC_KEY      already set (QA's own root)"
+  QA_PG=standalone; PROD_PG=none
+else
+  # The trust key always: one machine, one Ed25519 root, and a signature belongs to whoever holds it.
+  TRUST=$(value_of TB_TRUST_PUBLIC_KEY "$PROD_ENV")
+  [ -n "$TRUST" ] || { echo "$PROD_ENV carries no TB_TRUST_PUBLIC_KEY -- is this the production machine?" >&2; exit 1; }
+  put TB_TRUST_PUBLIC_KEY "$TRUST"
+  echo "==> copied from $PROD_ENV"
+  echo "    TB_TRUST_PUBLIC_KEY      $TRUST"
 
-[ -n "$TRUST" ] || { echo "$PROD_ENV carries no TB_TRUST_PUBLIC_KEY -- is this the production machine?" >&2; exit 1; }
-[ -n "$GATE" ]  || { echo "$PROD_ENV carries no RUNNER_GATE_DB_PASSWORD -- is this the production machine?" >&2; exit 1; }
-
-put TB_TRUST_PUBLIC_KEY "$TRUST"
-put RUNNER_GATE_DB_PASSWORD "$GATE"
-echo "==> copied from $PROD_ENV (both must match, see this script's header)"
-echo "    TB_TRUST_PUBLIC_KEY      $TRUST"
-echo "    RUNNER_GATE_DB_PASSWORD  ${GATE:0:4}... (the cluster-wide runner_gate role)"
+  # THE GATE PASSWORD ONLY WHERE THE TWO SHARE A POSTGRES SERVER. `runner_gate` is a cluster-wide
+  # ROLE: on one server it is one role, and soma's bootstrap resets its password on every bring-up,
+  # so QA must carry production's or its first start rewrites it. On a server of its own QA's
+  # `runner_gate` is its own role.
+  host_of() { local u="${1#*@}"; printf '%s' "${u%%/*}"; }
+  QA_PG=$(host_of "$(value_of SOMA_DB_URL "$QA_ENV")")
+  PROD_PG=$(host_of "$(value_of SOMA_DB_URL "$PROD_ENV")")
+  if [ -n "$QA_PG" ] && [ "$QA_PG" = "$PROD_PG" ]; then
+    GATE=$(value_of RUNNER_GATE_DB_PASSWORD "$PROD_ENV")
+    [ -n "$GATE" ] || { echo "$PROD_ENV carries no RUNNER_GATE_DB_PASSWORD" >&2; exit 1; }
+    put RUNNER_GATE_DB_PASSWORD "$GATE"
+    echo "    RUNNER_GATE_DB_PASSWORD  ${GATE:0:4}... (one server, so one runner_gate role)"
+  else
+    echo "==> QA is on its own Postgres (${QA_PG:-unset}), production on ${PROD_PG:-unset}"
+    echo "    so RUNNER_GATE_DB_PASSWORD is QA's own and is NOT copied"
+  fi
+fi
 
 # ---- the three QA mints for itself ----------------------------------------------------------------
 minted=0
@@ -97,6 +124,8 @@ echo "==> QA's own secrets"
 mint ORION_ADMIN_KEY hex32
 mint SOMA_SESSION_SECRET hex32
 mint RUNNER_TOKEN_SECRET hex32
+# Only when QA's server is its own; where it is shared the value was copied just above.
+[ "$QA_PG" = "$PROD_PG" ] || mint RUNNER_GATE_DB_PASSWORD hex32
 
 # The two must differ: one secret signing both a session and a runner token means a token minted for
 # one surface verifies on the other.

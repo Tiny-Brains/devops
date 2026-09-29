@@ -87,57 +87,56 @@ Production and QA have their own sections in the guides: `examples/web.prod.env.
 `examples/web.qa.env.example` explain every blank, and `scripts/setup/qa-secrets.sh` and
 `qa-db.sh` do the parts that must not be done by hand.
 
-## A QA stack beside production
+## QA
 
-**QA is the candidate release running on production's rows.** It shares the VM, the Postgres server,
-the edge and the trust key with production; it has its own databases, buckets, Redis, OAuth App and
-signatures. `compose/web.qa.yml`'s header says which of those is safe to share and why, one line
-each — read it before changing any of them.
+**QA is the candidate release running on production's rows, and it owns everything else.** Its own
+VM, its own Cloud SQL instance, its own buckets, Redis, GitHub OAuth App, trust key and edge. It
+runs `compose/web.prod.yml` — the same topology production runs, which is the only thing a QA stack
+is for — under the project `tinybrains-qa`.
 
-**Once, when the stack is first built** (on the VM, everything relative to `devops/`):
+**The one connection to production is a backup.** `scripts/setup/qa-refresh.sh` restores
+production's own automatic Cloud SQL backup onto QA's instance. That is an operation between two
+managed instances: production does no extra work, QA opens no connection to production's database,
+and QA holds no credential of production's.
 
-```sh
-cp examples/web.qa.env.example qa/web/.env   # then fill in what its comments ask for
-scripts/setup/qa-secrets.sh                  # three secrets minted, two copied from production
-scripts/setup/qa-db.sh                       # soma_qa + orion_state_qa on production's server
-cp compose/caddy/conf.d/qa.caddy.example compose/caddy/conf.d/qa.caddy   # then the hostname, twice
-./tb prod web up -d caddy                    # production's edge picks up the QA hostname
-```
+| | QA | production |
+|---|---|---|
+| VM | `tinybrains-qa-host` 35.184.95.2 | `tinybrains-host` 35.254.81.10 |
+| Cloud SQL | `tinybrains-qa-pg` 10.60.0.5 | `tinybrains-pg` 10.60.0.3 |
+| buckets | `tinybrains-{models,replays}-qa` | `tinybrains-{models,replays}` |
+| trust key | its own | its own |
+| VM identity | `tinybrains-qa-vm`, Cloud SQL only | default compute SA |
 
-The blanks that are made in someone else's dashboard — the DNS A record, the second GitHub OAuth
-App, the two `-qa` buckets and their own R2 token — are named in `examples/web.qa.env.example`, and
-`qa-secrets.sh` prints the list again when it finishes.
-
-**Every time the candidate changes**, which is the whole of a QA deploy:
+**Every deploy is one command**, on QA's machine:
 
 ```sh
 # qa/web/.env: SOMA_IMAGE and WEB_IMAGE to the candidate, both from ONE ants release
-TB_ENV=qa scripts/setup/sign-plugins.sh prod/web/keys/tinybrains-dev.pem
+TB_ENV=qa scripts/setup/sign-plugins.sh      # signs with QA's own key, after a new image
 scripts/setup/qa-refresh.sh --yes --up
 ```
 
-`qa-refresh.sh` **is** the deploy: it stops QA, drops QA's databases, copies production's live
-database in as it stands, runs the candidate's own migrations over that copy (soma's
-`scripts/cutover/`, from a soma checkout at the candidate's tag), copies production's models bucket
-into QA's, and brings the stack up. Run it with no flags first — that prints every step and every
-refusal and changes nothing.
+Run `qa-refresh.sh` with no flags first — it prints every step and every refusal and changes
+nothing.
 
-**Production is only ever read.** The one connection it opens to production is a `pg_dump`, which is
-consistent and takes no lock a competitor would feel. Everything the script can get wrong in the
-other direction — one database, one bucket, one session secret, a drifted gate password — is a
-refusal with production's name on it.
+**What the refresh does, and why in that order.** It stops QA; restores production's latest
+successful backup onto QA's instance, which replaces that instance *whole*, every database and
+every role, because roles are cluster-wide and a backup carries the cluster; resets the passwords QA
+connects with, since the restore just overwrote them with production's; runs the candidate's own
+migrations over the result (soma's `scripts/cutover/`, skipped when the digests already agree);
+copies production's models bucket into QA's so a copied submission is a model that loads; and brings
+the stack up. Replays are not copied — a QA match writes its own.
+
+**Why QA has a machine and an instance of its own**, rather than sharing production's as it first
+did: it shared one `db-f1-micro`, and the first time QA ran what it is for — a full copy of the
+ladder with its five clocks over 10k matches — the shared vCPU was gone and *production* logged 75
+slow statements a minute and timed its own clocks out. Sharing the VM was worse than a resource
+question: production's caddy owns 80/443, so QA's hostname could only be served by editing
+production's edge, and a QA web container on both compose networks resolved `soma` to
+**production's**, serving QA's build over the live API.
 
 **Why the data is copied rather than seeded.** A QA stack on an empty database tests the code and
-none of the data. The rows that break a release are the ones a season has accumulated — a settled
-version, a match half claimed, a competitor whose manifest predates a rule — and running the
-release's migration over them here is the rehearsal for running it on production.
-
-**What QA does not get.** Replays are not copied: they are the bulk of the bytes and a QA match
-writes its own, so a replay from before the refresh 404s in QA's viewer. `orion_state` is not copied
-either — Orion's state is a node's own, and QA's node rebuilds it from the package at its boot
-apply. And a QA **runner** is a separate machine's job (`./tb qa runner up -d` on the Mac mini), with
-a runner key minted on QA, never production's.
-
+none of the data. The rows that break a release are the ones a season has accumulated, and running
+the release's migration over them here is the rehearsal for running it on production.
 
 ## Invariants
 

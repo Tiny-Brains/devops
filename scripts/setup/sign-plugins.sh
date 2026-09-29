@@ -76,7 +76,18 @@ echo "    public key $(orion-server plugin pubkey --key "$KEY")"
 echo "    images from $ENV_FILE, into $OUT/"
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+# `docker cp` OUT OF A CONTAINER WRITES AS ROOT on Linux, so the plugin files this extracts are not
+# this user's to delete -- and a trap that fails is an EXIT CODE OF 1 from a script that did its job
+# and verified every signature. The files are chown-ed back through a container (the only root this
+# script is sure to have), and the removal cannot fail the run either way.
+cleanup() {
+  [ -n "${work:-}" ] || return 0
+  rm -rf "$work" 2>/dev/null && return 0
+  docker run --rm -v "$work:/w" "$PSQL_IMAGE_FOR_CLEANUP" sh -c 'rm -rf /w/..?* /w/.[!.]* /w/*' > /dev/null 2>&1 || true
+  rm -rf "$work" 2>/dev/null || true
+}
+PSQL_IMAGE_FOR_CLEANUP="${CLEANUP_IMAGE:-alpine:3.20}"
+trap cleanup EXIT
 
 # Copy an image's plugin directory out without running its entrypoint.
 from_image() {   # $1 name, $2 ref, $3 plugins directory in the image, $4 pull when missing (1/0)

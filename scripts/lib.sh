@@ -30,12 +30,20 @@ tb_paths() {
 }
 
 # The compose file an environment's stack is brought up with. Two per environment: the site and a
-# runner. QA reuses the production runner file -- one file, two projects, as kalam's README says.
+# runner. QA REUSES PRODUCTION'S FILES, BOTH OF THEM -- one file, two projects.
+#
+# It did not always. QA ran beside production on one machine, and a file of its own carried what
+# that cost: no ports (production's caddy owned 80/443), a service on production's network for
+# caddy to reach, and a forwarder in front of it because a container on two networks resolves
+# `soma` to whichever Docker answers with -- which was production's, so QA's site served its own
+# build over the LIVE API. QA has its own VM now, so none of that is true: it is the same topology
+# production runs, which is the only thing a QA stack is for. Everything that differs -- the
+# hostname, the images, the pools, the heap -- is in qa/web/.env.
 tb_compose() {   # $1 web|runner
   case "$TB_ENV:$1" in
     dev:web)     echo compose/web.yml ;;
     dev:runner)  echo compose/runner.yml ;;
-    qa:web)      echo compose/web.qa.yml ;;
+    qa:web)      echo compose/web.prod.yml ;;
     qa:runner)   echo compose/runner.prod.yml ;;
     prod:web)    echo compose/web.prod.yml ;;
     prod:runner) echo compose/runner.prod.yml ;;
