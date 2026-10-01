@@ -91,7 +91,7 @@ services:
       ORION_LOGGING__FORMAT: json
       RUST_LOG: ${ORION_RUST_LOG:-info,dataflow_rs::engine::workflow_executor=warn,dataflow_rs::engine::functions::filter=warn,orion::server::observability=warn,orion::cron::worker=warn}
 
-      ORION_VERSION: ${ORION_VERSION:-1.11.1}
+      ORION_VERSION: ${ORION_VERSION:-1.12.0}
       # HOW LONG A RESTART WAITS for the match in hand, and deliberately NOT the match channel's
       # timeout: that is a bound on a wedge, sized past the longest match the rules allow, and
       # waiting days for a restart would be absurd. A cut drain loses no result -- the lease lapses

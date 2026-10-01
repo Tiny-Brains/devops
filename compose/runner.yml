@@ -126,7 +126,7 @@ services:
       # refuses a runner that carries it with a public Soma URL.
       KALAM_ALLOW_PRIVATE_URLS: ${RUNNER_ALLOW_PRIVATE_URLS:-}
 
-      ORION_VERSION: ${ORION_VERSION:-1.11.1}
+      ORION_VERSION: ${ORION_VERSION:-1.12.0}
       # A draining match is worth waiting for: it is a real result that is otherwise replayed from
       # scratch by whoever claims the row next. Deliberately NOT the match channel's timeout, which
       # is a bound on a wedge sized past the longest match the rules allow -- waiting days for a
