@@ -1,0 +1,26 @@
+# EVERY ALERT GOES TO ONE DISCORD CHANNEL. The webhook URL is a credential (anyone holding it can
+# post there), so it lives in the environment's .env as GRAFANA_DISCORD_WEBHOOK_URL, never here.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: discord
+    receivers:
+      - uid: discord
+        type: discord
+        settings:
+          url: ${GRAFANA_DISCORD_WEBHOOK_URL}
+          use_discord_username: false
+          title: '{{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} [${GRAFANA_ENV}] {{ .CommonLabels.alertname }}'
+          message: |-
+            {{ range .Alerts }}{{ .Annotations.summary }}{{ if .Annotations.description }}
+            {{ .Annotations.description }}{{ end }}
+            {{ end }}https://${SITE_HOST}:3443/alerting/list
+
+policies:
+  - orgId: 1
+    receiver: discord
+    group_by: ["alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h

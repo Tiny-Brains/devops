@@ -262,6 +262,8 @@ services:
         condition: service_healthy
     environment:
       ORION_URL: http://soma:8080
+      # Where the console reads /metrics: the main listener, unless monitoring.yml moves it.
+      ORION_METRICS_URL: ${ORION_METRICS_URL:-http://soma:8080}
       ORION_AUTHZ_URL: http://soma:8080
       ORION_SIGNIN_URL: https://${SITE_HOST}/v1/auth/github
       # NO TRAILING SLASH, and the same value as Soma's CONSOLE_URL above.

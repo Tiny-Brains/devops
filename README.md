@@ -51,6 +51,7 @@ devops/
     runner.yml   runner.prod.yml        (prod and QA share this one, under different projects)
     caddy/Caddyfile  caddy/conf.d/      the production edge, which also serves the QA hostname
     orion-ui/                           the console's nginx template
+    monitoring.yml  monitoring/         Grafana, Prometheus, Loki, Tempo, Alloy -- opt-in per environment
   examples/             one .env template per compose file
   dev/  qa/  prod/      each: web/.env, kalam/.env, and the keys that environment signs with
 ```
@@ -137,6 +138,48 @@ production's edge, and a QA web container on both compose networks resolved `som
 **Why the data is copied rather than seeded.** A QA stack on an empty database tests the code and
 none of the data. The rows that break a release are the ones a season has accumulated, and running
 the release's migration over them here is the rehearsal for running it on production.
+
+## Monitoring
+
+**Opt-in, per environment.** An environment whose `web/.env` carries the line `TB_MONITORING=1` gets
+`compose/monitoring.yml` layered over its site stack by `tb`. It adds Prometheus (15 days or 1 GB),
+Loki (72 h), Tempo (24 h), one Alloy collecting all of it, and Grafana with four dashboards
+(Overview, Soma, Host and containers, Logs) and alert rules that post to one Discord channel, each
+message tagged with `GRAFANA_ENV`. Every container has a hard memory limit sized for an e2-small;
+together they use about 650 MB.
+
+It changes what Soma records through `ORION_*` settings only: a second, unauthenticated `/metrics`
+on the compose network (the console follows it there through `ORION_METRICS_URL`), and OpenTelemetry
+spans to Tempo. **How much it traces is the env file's choice, and the default is the minimum**:
+
+| `web/.env` | default (production) | QA |
+|---|---|---|
+| `TRACE_ERRORS_ONLY` | `true` -- a trace row for failed runs only | `false` -- every request on the 139 channels that do not pin their own policy |
+| `OTEL_SAMPLE_RATE` | `0.01` | `1.0` |
+| `TRACE_DEBUG_PROFILE` | `false` | `true` (`X-Orion-Profile: 1`; lets any caller probe timings) |
+
+Trace rows are batched either way, and shed rather than slowing a request when the database falls
+behind (`orion_trace_dropped_total{reason="overflow"}`).
+
+**Grafana is `https://<SITE_HOST>:3443`, behind the site's GitHub sign-in**, exactly as the console is:
+`grafana-gate` asks Soma's `/v1/admin-check` with the session cookie, so only a site admin gets in,
+and all of them as one Grafana user, `site-admin`. Signing in returns you to the site, not to Grafana
+(Soma's sign-in returns only to `APP_URL` and `CONSOLE_URL`); open `:3443` again.
+
+Turning it on, on the environment's machine:
+
+```sh
+# <env>/web/.env:  TB_MONITORING=1, GRAFANA_ENV=<env>, GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 24),
+#                  GRAFANA_DISCORD_WEBHOOK_URL=<the channel's webhook>, ORION_RUST_LOG=info,
+#                  LOG_MAX_SIZE=20m, LOG_MAX_FILE=5, and the tracing lines above if not the minimum
+cp compose/caddy/conf.d/grafana.caddy.example compose/caddy/conf.d/grafana.caddy
+./tb <env> web --profile console up -d     # recreates soma, caddy and the rest once; starts monitoring
+```
+
+and open tcp:3443 to that VM alone, with a firewall rule on a tag only it carries
+(`tinybrains-qa-grafana`, `tinybrains-prod-grafana`) -- never `tinybrains-web`, which both VMs carry.
+Turning it off is the reverse: drop `TB_MONITORING=1` and `./tb <env> web --profile console up -d
+--remove-orphans`.
 
 ## Invariants
 

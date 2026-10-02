@@ -44,6 +44,13 @@ esac
 [ -f "$ENVF" ] || { echo "no $ENVF -- that environment has no $TARGET settings on this machine" >&2; exit 1; }
 
 ARGS=(-p "$PROJECT" -f "$FILE")
+# MONITORING IS PER ENVIRONMENT, AND OPT-IN: an env file carrying the line `TB_MONITORING=1` layers
+# compose/monitoring.yml over that environment's site stack. QA and production share web.prod.yml, so
+# this is what keeps one environment's monitoring from becoming the other's. Before the override, so
+# a machine's own layer still has the last word.
+if [ "$TARGET" = web ] && grep -qx 'TB_MONITORING=1' "$ENVF"; then
+  ARGS+=(-f compose/monitoring.yml)
+fi
 OVERRIDE="${FILE%.yml}.override.yml"
 [ -f "$OVERRIDE" ] && ARGS+=(-f "$OVERRIDE")
 ARGS+=(--env-file "$ENVF")

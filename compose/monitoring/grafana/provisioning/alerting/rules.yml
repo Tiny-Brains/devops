@@ -1,0 +1,531 @@
+# GENERATED SHAPE, HAND-OWNED NOW: edit in place. Every rule is query A (instant) and a
+# threshold B on it. noDataState OK where an empty result means nothing happened; Alerting
+# where it means the probe or the collector itself is gone. NOT ENV-INTERPOLATED, unlike
+# contact-points.yml: `$labels` and `${X}` reach Grafana exactly as written.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: "Site"
+    folder: "TinyBrains"
+    interval: "1m"
+    rules:
+      - uid: "soma-not-ready"
+        title: "Soma not ready"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "min(probe_success{job=\"integrations/blackbox/soma_readyz\"})"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "lt"
+                    params:
+                      - 1
+        for: "2m"
+        noDataState: "Alerting"
+        execErrState: "Error"
+        annotations:
+          summary: "Soma's /readyz has failed for 2 minutes: the site's API is down or still applying its package."
+        labels:
+          severity: "critical"
+      - uid: "site-down"
+        title: "Site unreachable"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "min(probe_success{job=\"integrations/blackbox/site\"})"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "lt"
+                    params:
+                      - 1
+        for: "3m"
+        noDataState: "Alerting"
+        execErrState: "Error"
+        annotations:
+          summary: "The site has not answered 2xx from outside for 3 minutes (DNS, TLS, Caddy or web)."
+        labels:
+          severity: "critical"
+      - uid: "site-5xx"
+        title: "Site 5xx responses"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "loki"
+            model:
+              refId: "A"
+              expr: "sum(count_over_time({service=\"caddy\"} | json | status >= 500 [5m]))"
+              queryType: "instant"
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 10
+        for: "5m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "More than 10 responses with status 5xx in 5 minutes at the edge."
+        labels:
+          severity: "warning"
+      - uid: "soma-error-logs"
+        title: "Soma logging errors"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "loki"
+            model:
+              refId: "A"
+              expr: "sum(count_over_time({service=\"soma\", level=\"error\"} [5m]))"
+              queryType: "instant"
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 20
+        for: "5m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Soma wrote more than 20 ERROR lines in 5 minutes. The Logs dashboard has them."
+        labels:
+          severity: "warning"
+  - orgId: 1
+    name: "Soma"
+    folder: "TinyBrains"
+    interval: "1m"
+    rules:
+      - uid: "clock-lag"
+        title: "Clocks running late"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "histogram_quantile(0.99, sum by (le) (rate(orion_cron_schedule_lag_seconds_bucket[10m])))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 120
+        for: "10m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "p99 cron schedule lag is over 2 minutes: occurrences are produced faster than they run."
+        labels:
+          severity: "warning"
+      - uid: "cron-backlog"
+        title: "Cron backlog not draining"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "min_over_time(orion_cron_pending_occurrences[15m])"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 20
+        for: "5m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "More than 20 cron occurrences have waited for a worker for 15 minutes straight."
+        labels:
+          severity: "warning"
+      - uid: "cron-lease-lost"
+        title: "Cron run cancelled mid-flight"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "sum(increase(orion_cron_lease_renewal_failures_total[10m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0
+        for: "0s"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "A clock run lost its lease and was cancelled; whether its side effects landed is unknown. Check the clock's last occurrences."
+        labels:
+          severity: "warning"
+      - uid: "trace-persistence-failures"
+        title: "Trace writes lost"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "sum(increase(orion_trace_persistence_failures_total[10m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0
+        for: "0s"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Orion could not write some trace rows; those traces are gone."
+        labels:
+          severity: "warning"
+      - uid: "trace-overflow"
+        title: "Traces shed under load"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "sum(rate(orion_trace_dropped_total{reason=\"overflow\"}[10m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0
+        for: "10m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "The trace batch queue is overflowing: the database is not keeping up. Lower TRACE_SAMPLE_RATE or check Cloud SQL."
+        labels:
+          severity: "warning"
+      - uid: "audit-dropped"
+        title: "Admin audit events dropped"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "sum(increase(orion_audit_events_dropped_total[10m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0
+        for: "0s"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Admin actions went unrecorded: a hole in the audit trail."
+        labels:
+          severity: "critical"
+      - uid: "trace-cleanup-stalled"
+        title: "Trace cleanup stalled"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max(time() - orion_job_last_success_timestamp_seconds{exported_job=\"trace_cleanup\"})"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 3600
+        for: "5m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Trace cleanup has not succeeded for an hour (it runs every 15 minutes): the traces table is growing."
+        labels:
+          severity: "warning"
+  - orgId: 1
+    name: "Host"
+    folder: "TinyBrains"
+    interval: "1m"
+    rules:
+      - uid: "container-memory"
+        title: "Container near its memory limit"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max by (container_label_com_docker_compose_service) (container_memory_working_set_bytes / (container_spec_memory_limit_bytes > 0))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0.9
+        for: "10m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "{{ $labels.container_label_com_docker_compose_service }} has used over 90% of its memory limit for 10 minutes."
+        labels:
+          severity: "warning"
+      - uid: "container-restarting"
+        title: "Container restarting"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max by (container_label_com_docker_compose_service) (changes(container_start_time_seconds[30m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 2
+        for: "0s"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "{{ $labels.container_label_com_docker_compose_service }} restarted more than twice in 30 minutes."
+        labels:
+          severity: "warning"
+      - uid: "host-disk"
+        title: "VM disk filling"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max(1 - node_filesystem_avail_bytes{fstype=~\"ext4|xfs\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs\"})"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0.8
+        for: "10m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "The VM's disk is over 80% full."
+        labels:
+          severity: "warning"
+      - uid: "host-memory"
+        title: "VM memory low"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "min(node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "lt"
+                    params:
+                      - 0.1
+        for: "10m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Under 10% of the VM's memory has been available for 10 minutes."
+        labels:
+          severity: "warning"
+      - uid: "collector-down"
+        title: "Monitoring collector down"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "min(up{job=\"alloy\"})"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "lt"
+                    params:
+                      - 1
+        for: "5m"
+        noDataState: "Alerting"
+        execErrState: "Error"
+        annotations:
+          summary: "Alloy is down: no new metrics or logs are being collected, so every other alert is blind."
+        labels:
+          severity: "critical"

@@ -1,0 +1,14 @@
+# Prometheus is storage and query: Alloy collects and remote-writes everything. The two scrapes here
+# are the watchdogs -- Prometheus itself, and Alloy, whose `up` going to 0 is what says the rest of
+# the metrics went quiet because collection stopped, not because the stack did.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]

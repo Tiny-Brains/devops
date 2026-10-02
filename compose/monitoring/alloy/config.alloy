@@ -1,0 +1,211 @@
+// THE ONE COLLECTOR. Logs go to Loki, metrics are remote-written to Prometheus. Every label added here
+// is low-cardinality on purpose (service, level, job): a label per request is a Loki stream per
+// request, and that is what takes a small Loki down.
+
+// ============================================================================ logs
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.parse.receiver]
+}
+
+loki.process "parse" {
+  // ORION (soma, soma-bootstrap, and a Kalam runner's when one shares the host): tracing-subscriber's JSON --
+  // {"timestamp","level":"INFO","fields":{"message",...},"target"}. `level` becomes a label;
+  // `target` (which module, `audit` among them) is structured metadata, queryable without a stream.
+  stage.match {
+    selector = "{service=~\"soma|soma-bootstrap|runner|admit\"}"
+
+    stage.json {
+      expressions = { level = "level", target = "target" }
+    }
+    stage.template {
+      source   = "level"
+      template = "{{ ToLower .Value }}"
+    }
+    stage.labels {
+      values = { level = "" }
+    }
+    stage.structured_metadata {
+      values = { target = "" }
+    }
+  }
+
+  // CADDY: the access log of record, JSON. `status` stays out of the labels -- LogQL's `| json`
+  // reads it at query time, which is how the dashboards count 5xx.
+  stage.match {
+    selector = "{service=\"caddy\"}"
+
+    stage.json {
+      expressions = { level = "level", logger = "logger" }
+    }
+    stage.labels {
+      values = { level = "" }
+    }
+    stage.structured_metadata {
+      values = { logger = "" }
+    }
+  }
+
+  // GRAFANA, LOKI, TEMPO, ALLOY, PROMETHEUS: logfmt with a `level` key (Prometheus 3 capitalises it).
+  stage.match {
+    selector = "{service=~\"grafana|loki|tempo|alloy|prometheus\"}"
+
+    stage.logfmt {
+      mapping = { level = "" }
+    }
+    stage.template {
+      source   = "level"
+      template = "{{ ToLower .Value }}"
+    }
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+
+  // TEMPO 3's IDLE BACKEND WORKER logs an error every ~15 s when there is no compaction work; it is
+  // its normal state on a quiet node, not a fault.
+  stage.drop {
+    source     = ""
+    expression = "no jobs found"
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ============================================================================ metrics
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// SOMA, on the listener ORION_METRICS__BIND_ADDR opens -- not the main one, which needs the admin key.
+prometheus.scrape "soma" {
+  targets         = [{"__address__" = "soma:9464"}]
+  job_name        = "soma"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+// THE HOST, through its /proc, /sys and / mounted read-only.
+prometheus.exporter.unix "host" {
+  procfs_path        = "/host/proc"
+  sysfs_path         = "/host/sys"
+  rootfs_path        = "/host/root"
+  disable_collectors = ["arp", "bcache", "bonding", "btrfs", "edac", "fibrechannel", "hwmon", "infiniband", "ipvs", "mdadm", "nfs", "nfsd", "nvme", "powersupplyclass", "rapl", "tapestats", "thermal_zone", "xfs", "zfs"]
+
+  filesystem {
+    mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+)($|/)"
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs)$"
+  }
+}
+
+prometheus.scrape "host" {
+  targets    = prometheus.exporter.unix.host.targets
+  job_name   = "host"
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// EVERY CONTAINER: CPU, memory against its limit, restarts. Docker only, and only the compose
+// service label kept, so a container's series are named by what it is rather than its id.
+prometheus.exporter.cadvisor "containers" {
+  docker_host                  = "unix:///var/run/docker.sock"
+  docker_only                  = true
+  store_container_labels       = false
+  allowlisted_container_labels = ["com.docker.compose.service", "com.docker.compose.project"]
+  storage_duration             = "1m"
+}
+
+prometheus.scrape "containers" {
+  targets    = prometheus.exporter.cadvisor.containers.targets
+  job_name   = "containers"
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// BOTH REDIS: cluster state (never evicted -- its memory only grows) and the response cache (LRU).
+prometheus.exporter.redis "redis" {
+  redis_addr = "redis:6379"
+}
+
+prometheus.scrape "redis" {
+  targets    = prometheus.exporter.redis.redis.targets
+  job_name   = "redis"
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.exporter.redis "cache" {
+  redis_addr = "cache:6379"
+}
+
+prometheus.scrape "cache" {
+  targets    = prometheus.exporter.redis.cache.targets
+  job_name   = "cache"
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// PROBES: is Soma ready, and does the site answer from outside -- through DNS, TLS and Caddy, the
+// path a browser takes.
+prometheus.exporter.blackbox "probes" {
+  config = "{ modules: { http_2xx: { prober: http, timeout: 10s, http: { preferred_ip_protocol: ip4 } } } }"
+
+  target {
+    name    = "soma_readyz"
+    address = "http://soma:8080/readyz"
+    module  = "http_2xx"
+  }
+
+  target {
+    name    = "site"
+    address = string.format("https://%s/", sys.env("SITE_HOST"))
+    module  = "http_2xx"
+  }
+}
+
+prometheus.scrape "probes" {
+  targets    = prometheus.exporter.blackbox.probes.targets
+  job_name   = "probes"
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// THE MONITORING STACK ITSELF: is Loki ingesting, is Tempo receiving spans.
+prometheus.scrape "monitoring" {
+  targets = [
+    {"__address__" = "loki:3100", "service" = "loki"},
+    {"__address__" = "tempo:3200", "service" = "tempo"},
+    {"__address__" = "grafana:3000", "service" = "grafana"},
+  ]
+  job_name   = "monitoring"
+  forward_to = [prometheus.remote_write.default.receiver]
+}

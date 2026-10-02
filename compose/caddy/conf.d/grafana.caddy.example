@@ -1,0 +1,12 @@
+# GRAFANA, on the site's host and port 3443 -- the console's arrangement, for the same reason: the
+# session cookie is host-only and ignores the port, so the site's sign-in reaches it. Only on a
+# machine whose env file sets TB_MONITORING=1 (compose/monitoring.yml publishes the port):
+#
+#   cp grafana.caddy.example grafana.caddy
+#
+# The gate behind it decides who gets in; this only terminates TLS.
+{$SITE_HOST}:3443 {
+	import access_log
+	import headers
+	reverse_proxy grafana-gate:8080
+}

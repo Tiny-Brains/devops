@@ -173,12 +173,19 @@ server {
     # /metrics sits on the main listener, so `admin_auth` guards it too -- same
     # gate, same key. Requires `[metrics] enabled = true` on the node, or this
     # is a 404 rather than a 401.
+    #
+    # ITS OWN UPSTREAM, ORION_METRICS_URL, because it can move: a node with
+    # `metrics.bind_addr` set (compose/monitoring.yml does) serves /metrics on
+    # that listener ONLY, and the main one answers 404 -- which the console's
+    # Operations page reports as "Metrics are unavailable". Every compose file
+    # mounting this template must set it: envsubst leaves an unset variable as
+    # literal text, and nginx then refuses to start.
     location /metrics {
         auth_request /_authz;
         # Polled by the dashboard, so the same reasoning as /api/ above.
 
-        set $tb_orion ${ORION_URL};
-        proxy_pass $tb_orion$request_uri;
+        set $tb_metrics ${ORION_METRICS_URL};
+        proxy_pass $tb_metrics$request_uri;
         proxy_set_header Authorization "Bearer ${ORION_ADMIN_KEY}";
     }
 

@@ -1,0 +1,46 @@
+# Fixed uids: the dashboards and alert rules name these, so a reprovision never orphans a panel.
+apiVersion: 1
+
+prune: true
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 30s
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 2000
+      # A trace id in a log line becomes a link into Tempo.
+      derivedFields:
+        - name: trace_id
+          matcherRegex: '"trace_id":"([0-9a-f]{32})"'
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        customQuery: true
+        query: '{service="soma"} |= "$${__trace.traceId}"'
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

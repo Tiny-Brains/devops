@@ -1,0 +1,263 @@
+# MONITORING FOR ONE ENVIRONMENT'S SITE STACK, layered over web.prod.yml by `tb` when that
+# environment's env file carries `TB_MONITORING=1`. Nothing here changes a channel, a workflow, a
+# connector or an image: every Soma change below is an `ORION_*` setting.
+#
+#   metrics   Alloy scrapes Soma's own listener, both Redis, the host, every container and two
+#             probes, and remote-writes them to Prometheus.
+#   logs      Alloy tails every container through the Docker API into Loki. The json-file rotation
+#             in web.prod.yml stays as it is; Loki is the history, not the disk.
+#   traces    Soma exports OpenTelemetry spans to Tempo, and trace rows to its state database --
+#             AT A MINIMUM UNLESS THE ENV FILE ASKS FOR MORE (below): production runs the defaults,
+#             QA turns everything up.
+#   grafana   all three, with provisioned dashboards and alerts to Discord, behind the site's own
+#             GitHub sign-in: grafana-gate asks Soma's /v1/admin-check, as the Orion console does.
+#
+# ONE MANUAL STEP PER MACHINE: Caddy serves Grafana only once compose/caddy/conf.d/grafana.caddy
+# exists (cp grafana.caddy.example grafana.caddy). conf.d is git-ignored because the production
+# machine imports it too.
+#
+# SIZED FOR AN e2-small (2 GB). Every container here has a hard memory limit, and each Go service a
+# GOMEMLIMIT under it, so under pressure a monitoring container is the one that gives way -- never
+# Soma. Retention: metrics 15 days AND 1 GB, logs 72 h, traces 24 h, trace rows in Postgres 6 h.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-20m}
+    max-file: ${LOG_MAX_FILE:-5}
+
+services:
+  # ---- what the stack itself gains --------------------------------------------------------------
+  soma:
+    environment:
+      # A SECOND /metrics, WITHOUT AUTH, on its own port. The main listener's /metrics needs the admin
+      # key, which can also rewrite workflows and read trace payloads -- no scraper should hold it.
+      # Soma publishes no ports, so this is reachable only from the compose network. Orion logs a
+      # warning at boot that the address is not loopback; that is this decision, not a fault.
+      ORION_METRICS__BIND_ADDR: 0.0.0.0:9464
+      # ---- TRACING: MINIMAL BY DEFAULT ----------------------------------------------------------
+      # The defaults are production's: trace rows for failed runs only (what soma.toml.tmpl already
+      # does), 1% of spans to Tempo, no profiling. QA's env file turns all three up:
+      #
+      #   TRACE_ERRORS_ONLY=false     a trace row for EVERY request, on every channel that does not
+      #                               pin its own policy (139 of 148; the five clocks and four gate
+      #                               poll routes keep errors_only, which a deployment cannot override)
+      #   OTEL_SAMPLE_RATE=1.0        every span: one per HTTP request and one per cron attempt, with
+      #                               the log events inside them (the RUST_LOG filter applies to spans)
+      #   TRACE_DEBUG_PROFILE=true    `X-Orion-Profile: 1` answers with a per-phase timing breakdown --
+      #                               which also lets any caller probe internal timing, hence off here
+      ORION_TRACING__ENABLED: "true"
+      ORION_TRACING__OTLP_ENDPOINT: http://tempo:4317
+      ORION_TRACING__SERVICE_NAME: soma
+      ORION_TRACING__SAMPLE_RATE: ${OTEL_SAMPLE_RATE:-0.01}
+      ORION_TRACING__DEBUG_PROFILE_ENABLED: ${TRACE_DEBUG_PROFILE:-false}
+      ORION_TRACE_STORAGE__ERRORS_ONLY: ${TRACE_ERRORS_ONLY:-true}
+      ORION_TRACE_STORAGE__SAMPLE_RATE: ${TRACE_SAMPLE_RATE:-1.0}
+      # BATCHED AND SHED, not synchronous: one commit per batch on a small Cloud SQL, and a database
+      # that falls behind drops traces (orion_trace_dropped_total{reason="overflow"}) instead of
+      # slowing a request. Retention stays soma.toml.tmpl's 6 h; cleanup runs every 15 min.
+      ORION_TRACE_STORAGE__MODE: batch
+      ORION_TRACE_STORAGE__BATCH_WORKERS: "1"
+      ORION_TRACE_STORAGE__BATCH_SIZE: "200"
+      ORION_TRACE_STORAGE__BATCH_FLUSH_INTERVAL_MS: "1000"
+      ORION_TRACE_STORAGE__MAX_PENDING: "2000"
+      ORION_TRACE_STORAGE__ASYNC_ON_OVERFLOW: drop
+      ORION_TRACE_QUEUE__CLEANUP_INTERVAL_SECS: "900"
+
+  # THE CONSOLE FOLLOWS /metrics to its own listener: with bind_addr set the main one answers 404,
+  # and the Operations page goes blank ("Metrics are unavailable").
+  orion-ui:
+    environment:
+      ORION_METRICS_URL: http://soma:9464
+
+  # Grafana's port, published by the edge. Its site block is conf.d/grafana.caddy.
+  caddy:
+    ports:
+      - "3443:3443"
+
+  # ---- storage ----------------------------------------------------------------------------------
+  # Metrics. Alloy remote-writes everything; Prometheus scrapes only itself and Alloy, so a dead Alloy
+  # is an alert rather than a silence. Retention is whichever of time and size is reached first.
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-1GB}
+      - --web.enable-remote-write-receiver
+    environment:
+      GOMEMLIMIT: 180MiB
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    logging: *logging
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits:
+          memory: ${PROMETHEUS_MEMORY:-224m}
+
+  # Logs. Single binary, filesystem, compactor-enforced retention.
+  loki:
+    image: grafana/loki:3.7.8
+    command: ["-config.file=/etc/loki/loki.yml"]
+    environment:
+      GOMEMLIMIT: 180MiB
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+    logging: *logging
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits:
+          memory: ${LOKI_MEMORY:-224m}
+
+  # Traces. Tempo 3 in single-binary mode, which ingests without Kafka. On `platform` as well, because
+  # it is where Soma sends its spans.
+  tempo:
+    image: grafana/tempo:3.1.0
+    command: ["-target=all", "-config.file=/etc/tempo/tempo.yml"]
+    environment:
+      GOMEMLIMIT: 180MiB
+    volumes:
+      - ./monitoring/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+    logging: *logging
+    networks: [platform, monitoring]
+    deploy:
+      resources:
+        limits:
+          memory: ${TEMPO_MEMORY:-224m}
+
+  # ---- collection -------------------------------------------------------------------------------
+  # THE ONE AGENT. Root, the Docker socket and the host's /proc, /sys and / -- read-only, but the
+  # socket is root on this machine whatever its mount says, which is why Alloy publishes nothing.
+  alloy:
+    image: grafana/alloy:v1.20.1
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --disable-reporting
+    user: "0"
+    # The `instance` of every host and container series. Without it that is the container id, and
+    # each recreate starts a new set of series.
+    hostname: ${GRAFANA_ENV:?qa or prod -- names the host series and every Discord alert}-host
+    # The host's cgroup tree, not a private one: cAdvisor reads every container's from it.
+    cgroup: host
+    environment:
+      GOMEMLIMIT: 180MiB
+      SITE_HOST: ${SITE_HOST}
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - /var/lib/docker:/var/lib/docker:ro
+    restart: unless-stopped
+    logging: *logging
+    networks: [platform, monitoring]
+    deploy:
+      resources:
+        limits:
+          memory: ${ALLOY_MEMORY:-224m}
+
+  # ---- the view ---------------------------------------------------------------------------------
+  # NO LOGIN OF ITS OWN: AUTH PROXY, BEHIND A GATE. grafana-gate lets through only a signed-in site
+  # admin and then names them to Grafana in X-WEBAUTH-USER -- one shared user, `site-admin`, because
+  # /v1/admin-check answers yes or no and not who. Grafana believes that header from the gate's
+  # fixed address alone, it is on `monitoring` alone, and it publishes nothing. (Grafana 13 dropped
+  # anonymous access above Viewer, which is why this is a proxy and not an anonymous admin.)
+  grafana:
+    image: grafana/grafana:13.2.3
+    environment:
+      # Grafana 13 settles near 230 MiB with its bundled apps and alerting loaded, hence more room
+      # than the rest.
+      GOMEMLIMIT: 320MiB
+      GF_SERVER_ROOT_URL: https://${SITE_HOST}:3443/
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_HEADERS: Role:X-WEBAUTH-ROLE
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_WHITELIST: ${MONITORING_GATE_IP:-172.29.251.10}
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?openssl rand -hex 24 -- unused with the gate, but never the default}
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_LOG_LEVEL: warn
+      # EVERY DATASOURCE PLUGIN IS ITS OWN PROCESS, ~30 MB each, started whether or not a datasource
+      # uses it. These are the ones nothing here does; Prometheus, Loki and Tempo stay. Add
+      # `stackdriver` back the day Cloud SQL's metrics are wired in.
+      GF_PLUGINS_DISABLE_PLUGINS: influxdb,stackdriver,elasticsearch,mysql,mssql,zipkin,grafana-postgresql-datasource,opentsdb,jaeger,grafana-pyroscope-datasource,grafana-pyroscope-app,grafana-advisor-app,grafana-azure-monitor-datasource,graphite,cloudwatch,grafana-testdata-datasource
+      # Read by provisioning/alerting/contact-points.yml.
+      GRAFANA_DISCORD_WEBHOOK_URL: ${GRAFANA_DISCORD_WEBHOOK_URL:?a Discord channel's webhook URL}
+      GRAFANA_ENV: ${GRAFANA_ENV}
+      SITE_HOST: ${SITE_HOST}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana-dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus, loki, tempo]
+    restart: unless-stopped
+    logging: *logging
+    networks: [monitoring]
+    deploy:
+      resources:
+        limits:
+          memory: ${GRAFANA_MEMORY:-384m}
+
+  # THE SIGN-IN GATE, the Orion console's own pattern: nginx `auth_request` against Soma's
+  # /v1/admin-check with the site's session cookie, the verdict cached 10 s per session. Caddy's
+  # forward_auth would ask Soma -- and a db-f1-micro -- on every one of Grafana's many requests.
+  grafana-gate:
+    image: nginx:1.30.5-alpine
+    environment:
+      GATE_SOMA_URL: http://soma:8080
+      GATE_GRAFANA_URL: http://grafana:3000
+      GATE_SIGNIN_URL: https://${SITE_HOST}/v1/auth/github
+      GATE_SITE_URL: https://${SITE_HOST}/
+      NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
+      NGINX_ENVSUBST_FILTER: "GATE_|NGINX_LOCAL_RESOLVERS"
+    volumes:
+      - ./monitoring/grafana-gate/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on: [grafana]
+    restart: unless-stopped
+    logging: *logging
+    networks:
+      platform: {}
+      # FIXED, because it is the one address Grafana takes X-WEBAUTH-USER from.
+      monitoring:
+        ipv4_address: ${MONITORING_GATE_IP:-172.29.251.10}
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+
+# Its own network, so Grafana -- an anonymous admin -- cannot reach Soma's admin port at all.
+networks:
+  monitoring:
+    ipam:
+      config:
+        - subnet: ${MONITORING_SUBNET:-172.29.251.0/24}
+
+volumes:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  alloy-data:
+  grafana-data:
