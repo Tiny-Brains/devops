@@ -219,6 +219,6 @@ Turning it off is the reverse: drop `TB_MONITORING=1` and `./tb <env> web --prof
 
 ## Backing it up
 
-`backup/` holds the encrypted archives (`gpg`, passphrase in the login Keychain). This directory is
+`backup/secrets/` holds the encrypted archives (`gpg`, passphrase in the login Keychain). This directory is
 what they are made from. Nothing here is committed, so an un-backed-up file exists in exactly one
 place.
