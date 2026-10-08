@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TinyBrains Architecture</title>
+<meta name="description" content="How the TinyBrains platform runs on Orion: the production runtime, a submission's path to a rating, and a model version's lifecycle.">
+<link rel="icon" href="data:image/svg+xml;base64,PCEtLSBUaW55QnJhaW5zIGxvZ28uIERlcml2ZWQgZnJvbSAiQWkgQnJhaW4iIGJ5IFJpenFpIEF1bGl5YSBmcm9tIE5vdW4gUHJvamVjdCwKICAgICBsaWNlbnNlZCB1bmRlciBDQyBCWSAzLjAgKGh0dHBzOi8vY3JlYXRpdmVjb21tb25zLm9yZy9saWNlbnNlcy9ieS8zLjAvKS4KICAgICBodHRwczovL3RoZW5vdW5wcm9qZWN0LmNvbS9pY29uL2FpLWJyYWluLTcyNzYxMTYvCgogICAgIFRoaXMgZmlsZSB0cmF2ZWxzIG9uIGl0cyBvd24gYXMgYSBmYXZpY29uLCBzbyB0aGUgYXR0cmlidXRpb24gdHJhdmVscyB3aXRoIGl0LgogICAgIFRoZSBzYW1lIGdlb21ldHJ5IGlzIGluIHNyYy9jb21wb25lbnRzL0xvZ28udHN4IGFuZCB0aGUgbGlnaHQvZGFyayB0d2luIGJlc2lkZQogICAgIHRoaXMgZmlsZTsgd2ViL1JFQURNRS5tZCBzYXlzIHdoeSB0aGUgdGhyZWUgZXhpc3QgYW5kIHRvIGVkaXQgdGhlbSB0b2dldGhlci4gLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgdmlld0JveD0iMCAwIDEwMCAxMDAiIHJvbGU9ImltZyIgYXJpYS1sYWJlbGxlZGJ5PSJjaXJjdWl0LXRpdGxlIGNpcmN1aXQtZGVzYyI+CiAgPHRpdGxlIGlkPSJjaXJjdWl0LXRpdGxlIj5UaW55QnJhaW5zPC90aXRsZT4KICA8ZGVzYyBpZD0iY2lyY3VpdC1kZXNjIj5BIGJyYWluIHNlZW4gZnJvbSB0aGUgZnJvbnQsIGRyYXduIGFzIGNpcmN1aXQgdHJhY2VzLiBGaXZlIG1pcnJvcmVkIHBhaXJzIG9mIHRyYWNlcywgZWFjaCBlbmRpbmcgaW4gYSBub2RlLCBjYXJyeSB0aGUgYnJhaW4tcmVnaW9uIGh1ZXM7IHRoZSBzaWxob3VldHRlIGFuZCB0aGUgY2VudHJhbCBmaXNzdXJlIGFyZSBkcmF3biBpbiB0aGUgdGV4dCBjb2xvdXIuPC9kZXNjPgogIDxwYXRoIGZpbGw9IiNFRUYzRkYiIGQ9Im03Ni4zODcgNjguNjUyYzAtMi43MTUtMi4yMDMtNC45MTgtNC45MTgtNC45MThzLTQuOTE4IDIuMjAzLTQuOTE4IDQuOTE4YzAgMi4wNyAxLjI4NSAzLjg0OCAzLjEwMiA0LjU2M3YxMi43MDNsLTQuNjIxIDQuNjQ1aC01LjI2NmwtNy45NjEtNy45OHYtNjYuNzE1bDYuNDMtNi40M2g3LjE4NGwxMS40MyAxMS40M2MwLjcwMyAwLjcwMyAxLjg0OCAwLjcwMyAyLjU2MyAwIDAuNzAzLTAuNzAzIDAuNzAzLTEuODQ4IDAtMi41NjJsLTExLjk2MS0xMS45NTdjLTAuMzM2LTAuMzM2LTAuNzk3LTAuNTMxLTEuMjc3LTAuNTMxaC04LjY4NGMtMC40OCAwLTAuOTM3IDAuMTk1LTEuMjc3IDAuNTMxbC02LjIxMSA2LjIxNS02LjIxNS02LjIxNWMtMC4zMzYtMC4zMzYtMC43OTctMC41MzEtMS4yNzctMC41MzFoLTguNjg0Yy0wLjQ4IDAtMC45MzcgMC4xOTUtMS4yNzcgMC41MzFsLTExLjk1MyAxMS45NTdjLTAuNzAzIDAuNzAzLTAuNzAzIDEuODQ4IDAgMi41NjMgMC43MDMgMC43MDMgMS44NDggMC43MDMgMi41NjMgMGwxMS40My0xMS40M2g3LjE4NGw2LjQzIDYuNDN2NjYuNzIzbC03Ljk2MSA3Ljk4MWgtNS4yNjZsLTQuNjIxLTQuNjQ0LTAuMDA0LTEyLjcxMWMxLjgxNi0wLjcyMyAzLjEwMi0yLjQ4OCAzLjEwMi00LjU2MiAwLTIuNzE1LTIuMjAzLTQuOTE4LTQuOTE4LTQuOTE4cy00LjkxOCAyLjIwMy00LjkxOCA0LjkxOGMwIDIuMDcgMS4yODUgMy44NDggMy4xMDIgNC41NjN2MTMuNDYxYzAgMC40OCAwLjE5NSAwLjkzOCAwLjUzMSAxLjI3N2w1LjY4NCA1LjcwM2MwLjMzNiAwLjMzNiAwLjc5NyAwLjUzMSAxLjI4NSAwLjUzMWg2Ljc2NmMwLjQ4IDAgMC45MzgtMC4xOTUgMS4yODUtMC41MzFsNy43NDYtNy43NTQgNy43NDYgNy43NTRjMC4zMzYgMC4zMzYgMC43OTcgMC41MzEgMS4yODUgMC41MzFoNi43NjZjMC40OCAwIDAuOTM4LTAuMTk1IDEuMjg1LTAuNTMxbDUuNjg0LTUuNzAzYzAuMzM2LTAuMzM2IDAuNTMxLTAuNzk3IDAuNTMxLTEuMjc3bC0wLjAwNC0xMy40NjFjMS43ODktMC43MjcgMy4wODItMi40OTIgMy4wODItNC41NjJ6bS00Ny44NTUtMS4yOTdjMC43MDMgMCAxLjI5NyAwLjU5NCAxLjI5NyAxLjI5N3MtMC41OTQgMS4yOTctMS4yOTcgMS4yOTctMS4yOTctMC41OTQtMS4yOTctMS4yOTcgMC41OTQtMS4yOTcgMS4yOTctMS4yOTd6bTQyLjkzOCAwYzAuNzAzIDAgMS4yOTcgMC41OTQgMS4yOTcgMS4yOTdzLTAuNTk0IDEuMjk3LTEuMjk3IDEuMjk3LTEuMjk3LTAuNTk0LTEuMjk3LTEuMjk3IDAuNTk0LTEuMjk3IDEuMjk3LTEuMjk3eiIvPjwhLS0gc2lsaG91ZXR0ZSBhbmQgY2VudHJhbCBmaXNzdXJlIC0tPgogIDxwYXRoIGZpbGw9IiM3NkE3RkYiIGQ9Im0zNC42NzIgMzcuMzQ4Yy0wLjcwMyAwLjcwMy0wLjcwMyAxLjg1NiAwLjAxMiAyLjU2MyAwLjM1NSAwLjM0OCAwLjgxNiAwLjUzMSAxLjI3NyAwLjUzMSAwLjQ2MSAwIDAuOTMtMC4xNzIgMS4yODUtMC41MzFsNC41NTEtNC41N2MwLjMzNi0wLjMzNiAwLjUzMS0wLjc5NyAwLjUzMS0xLjI3N3YtNi4zNjdjMS44MTYtMC43MjMgMy4xMDItMi40ODggMy4xMDItNC41NjIgMC0yLjcxNS0yLjIwMy00LjkxOC00LjkxOC00LjkxOC0yLjY5NSAwLTQuODk4IDIuMjAzLTQuODk4IDQuOTE4IDAgMi4wNyAxLjI3NyAzLjgzNiAzLjA4MiA0LjU2M3Y1LjYyMXptNS44NC0xNS41MzFjMC43MTUgMCAxLjI5NyAwLjU4MiAxLjI5NyAxLjI5NyAwIDAuNzE1LTAuNTgyIDEuMjk3LTEuMjk3IDEuMjk3LTAuNjk1IDAtMS4yNzctMC41OTQtMS4yNzctMS4yOTcgMC0wLjcwNyAwLjU4Mi0xLjI5NyAxLjI3Ny0xLjI5N3oiLz48IS0tIGxlZnQgIGlubmVyIHVwcGVyIC0tPgogIDxwYXRoIGZpbGw9IiM3NkE3RkYiIGQ9Im02MS4yOTcgMzMuMzA1di01LjYyMWMxLjgwNS0wLjcyMyAzLjA4Mi0yLjQ4OCAzLjA4Mi00LjU2MiAwLTIuNzE1LTIuMTk1LTQuOTE4LTQuODk4LTQuOTE4LTIuNzE1IDAtNC45MTggMi4yMDMtNC45MTggNC45MTggMCAyLjA3IDEuMjg1IDMuODQ4IDMuMTAyIDQuNTYzdjYuMzY3YzAgMC40OCAwLjE5NSAwLjkzOCAwLjUzMSAxLjI3N2w0LjU1MSA0LjU3YzAuMzU1IDAuMzU1IDAuODE2IDAuNTMxIDEuMjg1IDAuNTMxIDAuNDYxIDAgMC45MTgtMC4xNzIgMS4yNzctMC41MzEgMC43MDMtMC43MDMgMC43MTUtMS44NDggMC4wMTItMi41NjJ6bS0xLjgwOS0xMS40ODhjMC42OTUgMCAxLjI3NyAwLjU5NCAxLjI3NyAxLjI5N3MtMC41ODIgMS4yOTctMS4yNzcgMS4yOTdjLTAuNzE1IDAtMS4yOTctMC41ODItMS4yOTctMS4yOTcgMC4wMDQtMC43MTUgMC41ODYtMS4yOTcgMS4yOTctMS4yOTd6Ii8+PCEtLSByaWdodCBpbm5lciB1cHBlciAtLT4KICA8cGF0aCBmaWxsPSIjNTBENkNFIiBkPSJtMTMuNTEyIDU4LjMzNmMwLjcwMy0wLjcwMyAwLjcwMy0xLjg0OCAwLTIuNTYybC0yLjcwMy0yLjcwMy0wLjAwNC0xOS44NjcgNi4xMzMtNi4xMzNoNi4wN2MwLjcyMyAxLjgxNiAyLjQ4OCAzLjEwMiA0LjU2MyAzLjEwMiAyLjcxNSAwIDQuOTE4LTIuMjAzIDQuOTE4LTQuOTE4cy0yLjIwMy00LjkxOC00LjkxOC00LjkxOGMtMi4wNyAwLTMuODQ4IDEuMjg1LTQuNTYyIDMuMTAyaC02LjgxNmMtMC40OCAwLTAuOTM3IDAuMTk1LTEuMjc3IDAuNTMxbC03LjE5NSA3LjE5NWMtMC4zMzYgMC4zMzYtMC41MzEgMC43OTctMC41MzEgMS4yNzd2MjEuMzY3YzAgMC40OCAwLjE5NSAwLjkzOCAwLjUzMSAxLjI3N2wzLjIzNCAzLjIzNGMwLjM1NSAwLjM1NSAwLjgxNiAwLjUzMSAxLjI3NyAwLjUzMSAwLjQ2NS0wLjAwNCAwLjkzNC0wLjE2OCAxLjI4MS0wLjUxNnptMTQuMDU5LTM0LjM2N2MwLjcxNSAwIDEuMjk3IDAuNTgyIDEuMjk3IDEuMjk3IDAgMC43MDMtMC41OTQgMS4yOTctMS4yOTcgMS4yOTctMC43MDMgMC0xLjI5Ny0wLjU5NC0xLjI5Ny0xLjI5NyAwLjAwNC0wLjcxNSAwLjU4Mi0xLjI5NyAxLjI5Ny0xLjI5N3oiLz48IS0tIGxlZnQgIG91dGVyIHVwcGVyIC0tPgogIDxwYXRoIGZpbGw9IiM1MEQ2Q0UiIGQ9Im05Mi4yODUgMzEuMTcyLTcuMTk1LTcuMTk1Yy0wLjMzNi0wLjMzNi0wLjc5Ny0wLjUzMS0xLjI3Ny0wLjUzMWgtNi44MTZjLTAuNzIzLTEuODE2LTIuNDg4LTMuMTAyLTQuNTYyLTMuMTAyLTIuNzE1IDAtNC45MTggMi4yMDMtNC45MTggNC45MTggMCAyLjcxNSAyLjIwMyA0LjkxOCA0LjkxOCA0LjkxOCAyLjA3IDAgMy44NDgtMS4yODUgNC41NjMtMy4xMDJoNi4wN2w2LjEzMyA2LjEzM3YxOS44NjdsLTIuNzAzIDIuNzAzYy0wLjcwMyAwLjcwMy0wLjcwMyAxLjg0OCAwIDIuNTYzIDAuMzU1IDAuMzU1IDAuODE2IDAuNTMxIDEuMjc3IDAuNTMxIDAuNDYxIDAgMC45My0wLjE3MiAxLjI3Ny0wLjUzMWwzLjIzNC0zLjI0MmMwLjMzNi0wLjMzNiAwLjUzMS0wLjc5NyAwLjUzMS0xLjI3N3YtMjEuMzYzYy0wLjAxMi0wLjQ4LTAuMTk1LTAuOTQxLTAuNTMxLTEuMjg5em0tMTkuODU1LTQuNjA5Yy0wLjcwMyAwLTEuMjk3LTAuNTk0LTEuMjk3LTEuMjk3IDAtMC43MTUgMC41ODItMS4yOTcgMS4yOTctMS4yOTcgMC43MTUgMCAxLjI5NyAwLjU4MiAxLjI5NyAxLjI5Ny0wLjAwNCAwLjcwMy0wLjU5NCAxLjI5Ny0xLjI5NyAxLjI5N3oiLz48IS0tIHJpZ2h0IG91dGVyIHVwcGVyIC0tPgogIDxwYXRoIGZpbGw9IiM3NEM2RjUiIGQ9Im0zMS4xODQgNDguMTQ1aC00LjQ2MWwtMS44OTgtMS44NzkgMC4wMDQtMTMuMjE1YzAtMS0wLjgwNS0xLjgwNS0xLjgwNS0xLjgwNXMtMS44MDUgMC44MDUtMS44MDUgMS44MDV2MTMuOTYxYzAgMC40OCAwLjE5NSAwLjk0OSAwLjUzMSAxLjI4NWwyLjk2MSAyLjkzOGMwLjMzNiAwLjMzNiAwLjc5NyAwLjUyIDEuMjc3IDAuNTJoNS4yMDNjMC43MjMgMS44MTYgMi40ODggMy4xMDIgNC41NjMgMy4xMDIgMi43MTUgMCA0LjkxOC0yLjIwMyA0LjkxOC00LjkxOCAwLTIuNjk1LTIuMjAzLTQuODk4LTQuOTE4LTQuODk4LTIuMDgyIDAuMDEyLTMuODQ4IDEuMjk3LTQuNTcgMy4xMDZ6bTQuNTYzIDAuNTI3YzAuNzE1IDAgMS4yOTcgMC41NyAxLjI5NyAxLjI3NyAwIDAuNzIzLTAuNTcgMS4yOTctMS4yOTcgMS4yOTctMC43MTUgMC0xLjI5Ny0wLjU4Mi0xLjI5Ny0xLjI5NyAwLTAuNjk1IDAuNTktMS4yNzcgMS4yOTctMS4yNzd6Ii8+PCEtLSBsZWZ0ICBpbm5lciBtaWRkbGUgLS0+CiAgPHBhdGggZmlsbD0iIzc0QzZGNSIgZD0ibTY4LjgyOCA1MS43NTRoNS4yMDNjMC40OCAwIDAuOTM4LTAuMTk1IDEuMjc3LTAuNTMxbDIuOTM4LTIuOTM3YzAuMzM2LTAuMzM2IDAuNTMxLTAuNzk3IDAuNTMxLTEuMjc3di0xMy45NTdjMC0xLTAuODA1LTEuODA1LTEuODA1LTEuODA1cy0xLjgwNSAwLjgwNS0xLjgwNSAxLjgwNXYxMy4yMDNsLTEuODc5IDEuODc5aC00LjQ0OWMtMC43MjMtMS44MDUtMi40ODgtMy4wODItNC41NjItMy4wODItMi43MTUgMC00LjkxOCAyLjE5NS00LjkxOCA0Ljg5OCAwIDIuNzE1IDIuMjAzIDQuOTE4IDQuOTE4IDQuOTE4IDIuMDUxLTAuMDEyIDMuODI0LTEuMjk3IDQuNTUxLTMuMTEzem0tNC41NzQtMC41MDhjLTAuNzIzIDAtMS4yOTctMC41Ny0xLjI5Ny0xLjI5NyAwLTAuNzAzIDAuNTgyLTEuMjc3IDEuMjk3LTEuMjc3IDAuNzAzIDAgMS4yOTcgMC41ODIgMS4yOTcgMS4yNzcgMCAwLjcxNS0wLjU4MiAxLjI5Ny0xLjI5NyAxLjI5N3oiLz48IS0tIHJpZ2h0IGlubmVyIG1pZGRsZSAtLT4KICA8cGF0aCBmaWxsPSIjQTE5NEZGIiBkPSJtMjMuNDY5IDc2LjI2NmgtMi43ODVsLTUuNjIxLTUuNjAydi02Ljk2OWwyLjcwMy0yLjcwM2MwLjYwMiAwLjI1NCAxLjI1NCAwLjQwNiAxLjk0OSAwLjQwNiAyLjcxNSAwIDQuOTE4LTIuMjAzIDQuOTE4LTQuOTE4IDAtMi43MTUtMi4yMDMtNC45MTgtNC45MTgtNC45MThzLTQuOTE4IDIuMjAzLTQuOTE4IDQuOTE4YzAgMC42OTUgMC4xNDUgMS4zNTYgMC40MDYgMS45NDlsLTMuMjM0IDMuMjM0Yy0wLjMzNiAwLjMzNi0wLjUzMSAwLjc5Ny0wLjUzMSAxLjI3N3Y4LjQ2OWMwIDAuNDggMC4xOTUgMC45MzggMC41MzEgMS4yODVsNi42ODQgNi42NjRjMC4zMzYgMC4zMzYgMC43OTcgMC41MzEgMS4yNzcgMC41MzFsMy41MzktMC4wMDRjMSAwIDEuODA1LTAuODA1IDEuODA1LTEuODA1IDAuMDA0LTEtMC44MDUtMS44MTYtMS44MDUtMS44MTZ6bS0zLjc0Ni0yMS4wODJjMC43MTUgMCAxLjI5NyAwLjU4MiAxLjI5NyAxLjI5NyAwIDAuNzE1LTAuNTgyIDEuMjk3LTEuMjk3IDEuMjk3LTAuMzQ4IDAtMC42NzItMC4xNTItMC45MDYtMC4zODdzLTAuMzg3LTAuNTYyLTAuMzg3LTAuOTA2YzAtMC43MDcgMC41OS0xLjMwMSAxLjI5My0xLjMwMXoiLz48IS0tIGxlZnQgIG91dGVyIGxvd2VyIC0tPgogIDxwYXRoIGZpbGw9IiNBMTk0RkYiIGQ9Im04NC43ODUgNTguNDNjMC4yNTQtMC42MDIgMC40MDYtMS4yNTQgMC40MDYtMS45NDkgMC0yLjcxNS0yLjIwMy00LjkxOC00LjkxOC00LjkxOC0yLjcxNSAwLTQuOTE4IDIuMjAzLTQuOTE4IDQuOTE4IDAgMi43MTUgMi4yMDMgNC45MTggNC45MTggNC45MTggMC42OTUgMCAxLjM1Ni0wLjE0NSAxLjk0OS0wLjQwNmwyLjcwMyAyLjcwM3Y2Ljk2OWwtNS42MjEgNS42MDJoLTIuNzczYy0xIDAtMS44MDUgMC44MDUtMS44MDUgMS44MDVzMC44MDUgMS44MDUgMS44MDUgMS44MDVoMy41MzFjMC40OCAwIDAuOTM4LTAuMTk1IDEuMjc3LTAuNTMxbDYuNjg0LTYuNjY0YzAuMzM2LTAuMzM2IDAuNTMxLTAuNzk3IDAuNTMxLTEuMjg1di04LjQ2OWMwLTAuNDgtMC4xOTUtMC45MzctMC41MzEtMS4yNzd6bS01LjgwNS0xLjk0OWMwLTAuNzE1IDAuNTgyLTEuMjk3IDEuMjk3LTEuMjk3IDAuNzAzIDAgMS4yOTcgMC41OTQgMS4yOTcgMS4yOTcgMCAwLjM0OC0wLjE1MiAwLjY3Mi0wLjM4NyAwLjkwNnMtMC41NjIgMC4zODctMC45MDYgMC4zODdjLTAuNzE5IDAuMDA0LTEuMzAxLTAuNTc4LTEuMzAxLTEuMjkzeiIvPjwhLS0gcmlnaHQgb3V0ZXIgbG93ZXIgLS0+CiAgPHBhdGggZmlsbD0iI0ZGOTc3NiIgZD0ibTM1LjYxMyA3Ni43OTdjMCAyLjcxNSAyLjE5NSA0LjkxOCA0Ljg5OCA0LjkxOCAyLjcxNSAwIDQuOTE4LTIuMjAzIDQuOTE4LTQuOTE4IDAtMi4wNy0xLjI4NS0zLjg0OC0zLjEwMi00LjU2MnYtNi4zNjdjMC0wLjQ4LTAuMTk1LTAuOTM3LTAuNTMxLTEuMjc3bC00LjU1MS00LjU3Yy0wLjcwMy0wLjcwMy0xLjg0OC0wLjcxNS0yLjU2Mi0wLjAxMi0wLjcwMyAwLjcwMy0wLjcxNSAxLjg0OC0wLjAxMiAyLjU2M2w0LjAzMSA0LjAzOXY1LjYyMWMtMS44MDUgMC43My0zLjA5IDIuNTA0LTMuMDkgNC41NjZ6bTQuODk4IDEuMzA1Yy0wLjY5NSAwLTEuMjc3LTAuNTk0LTEuMjc3LTEuMjk3IDAtMC43MDMgMC41ODItMS4yOTcgMS4yNzctMS4yOTcgMC43MTUgMCAxLjI5NyAwLjU4MiAxLjI5NyAxLjI5Ny0wLjAwNCAwLjcwNy0wLjU4NiAxLjI5Ny0xLjI5NyAxLjI5N3oiLz48IS0tIGxlZnQgIGlubmVyIGxvd2VyIC0tPgogIDxwYXRoIGZpbGw9IiNGRjk3NzYiIGQ9Im02NS4zMjggNjIuNTYyYzAuNzAzLTAuNzAzIDAuNzAzLTEuODU1LTAuMDEyLTIuNTYyLTAuNzAzLTAuNzAzLTEuODU1LTAuNzAzLTIuNTYyIDAuMDEybC00LjU1MSA0LjU3Yy0wLjMzNiAwLjMzNi0wLjUzMSAwLjc5Ny0wLjUzMSAxLjI3N3Y2LjM2N2MtMS44MTYgMC43MjMtMy4xMDIgMi40ODgtMy4xMDIgNC41NjMgMCAyLjcxNSAyLjIwMyA0LjkxOCA0LjkxOCA0LjkxOCAyLjY5NSAwIDQuODk4LTIuMjAzIDQuODk4LTQuOTE4IDAtMi4wNy0xLjI3Ny0zLjgzNi0zLjA4Mi00LjU2MnYtNS42MjF6bS01Ljg0IDE1LjUzOWMtMC43MTUgMC0xLjI5Ny0wLjU4Mi0xLjI5Ny0xLjI5NyAwLTAuNzE1IDAuNTgyLTEuMjk3IDEuMjk3LTEuMjk3IDAuNjk1IDAgMS4yNzcgMC41OTQgMS4yNzcgMS4yOTcgMCAwLjcwNy0wLjU4MiAxLjI5Ny0xLjI3NyAxLjI5N3oiLz48IS0tIHJpZ2h0IGlubmVyIGxvd2VyIC0tPgo8L3N2Zz4K">
+<script>
+  // Before the first paint, as the site does: the reader's stored choice, else the system's. The key is
+  // archify's, so a choice made here carries to every diagram; ?theme= wins, as it does on theirs.
+  (function () {
+    var t = null;
+    try { t = new URLSearchParams(location.search).get('theme'); } catch (_) {}
+    try { if (t !== 'light' && t !== 'dark') t = localStorage.getItem('archify-theme'); } catch (_) {}
+    if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<style id="tb-tokens">
+/* ============================================================================
+   TinyBrains Cobalt — the application's design tokens.
+
+   APP SOURCE, and the only copy of these values in the repository. index.html
+   loads it as /design-system/tokens.css, and it is copied into dist/ and into
+   the nginx image with the rest of public/.
+
+   Dark is the default HERE, and it is the fallback rather than the policy: lib/theme.ts sets
+   data-theme on <html> before the first paint, from the reader's stored choice if they have
+   made one and from prefers-color-scheme if they have not. That file is the only thing that
+   decides, so this stylesheet deliberately carries no media query of its own — two mechanisms
+   choosing one palette is two mechanisms that will disagree.
+
+   Every colour below is a role, so nothing in the app names a literal.
+   ============================================================================ */
+:root {
+  color-scheme: dark;
+
+  /* surfaces and ink */
+  /* --bg-base EXISTS FOR THE BOOK, and is the only token with a second name. mdBook's own
+     variables.css sets --bg for a reader with JavaScript off, at a specificity a plain :root
+     loses to -- so docs/theme/tokens.css re-asserts --bg from this, at a selector that wins.
+     Deriving it means the page background is still written down exactly once. */
+  --bg-base: #090F1D;
+  --bg: var(--bg-base);
+  --surface: #121D32;
+  --surface-raised: #1C2B46;
+  --ink: #EEF3FF;
+  --muted: #A6B5D1;
+  --line: #344764;
+
+  /* the one accent, and what reads on top of it */
+  --accent: #86B2FF;
+  --accent-ink: #0B224A;
+
+  /* labelled outcomes — never the only carrier of meaning */
+  --success: #62D6B0;
+  --warning: #FFD079;
+  --danger: #FF9A9A;
+
+  /* the logo's regions, and the weight-class hues drawn from them */
+  --frontal: #76A7FF;
+  --parietal: #50D6CE;
+  --occipital: #A194FF;
+  --temporal: #74C6F5;
+  --cerebellum: #FF9776;
+  --stem: #99ADC9;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-base: #F5F8FF;
+  --bg: var(--bg-base);
+  --surface: #FFFFFF;
+  --surface-raised: #EAF0FC;
+  --ink: #142642;
+  --muted: #536780;
+  --line: #B9C9E1;
+
+  --accent: #255FC5;
+  --accent-ink: #FFFFFF;
+
+  --success: #137858;
+  --warning: #896009;
+  --danger: #BF354D;
+
+  --frontal: #3266C4;
+  --parietal: #147F83;
+  --occipital: #7555BD;
+  --temporal: #287CB0;
+  --cerebellum: #C0613A;
+  --stem: #657991;
+}
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
+
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 18px;
+}
+</style>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font-sans); }
+  main { max-width: 880px; margin: 0 auto; padding: var(--space-12) var(--space-4) var(--space-16); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-8); }
+  .brand { display: flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none;
+    font: 750 25px/1 var(--font-sans); letter-spacing: -.02em; }
+  .brand svg { width: 39px; height: 39px; flex: none; }
+  .brand b { color: var(--muted); font-weight: inherit; }
+  .theme { height: 34px; padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md);
+    background: var(--surface); color: var(--ink); font: 500 14px var(--font-sans); cursor: pointer; }
+  .theme:focus-visible, a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font: 700 30px/1.15 var(--font-sans); letter-spacing: -.02em; margin: 0 0 var(--space-2); }
+  .lede { color: var(--muted); margin: 0 0 var(--space-8); }
+  .lede strong { color: var(--ink); }
+  ol { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+  a.card { display: block; padding: 20px 22px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); color: inherit; text-decoration: none; }
+  a.card:hover { border-color: var(--accent); }
+  .card h2 { font: 650 18px/1.3 var(--font-sans); margin: 0 0 var(--space-1); }
+  .card h2::after { content: " \2192"; color: var(--accent); }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  footer { margin-top: var(--space-8); color: var(--muted); font-size: 13px; }
+  footer p { margin: 0 0 var(--space-1); }
+  footer a { color: inherit; }
+  code { font-family: var(--font-mono); font-size: .92em; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <a class="brand" href="./" aria-label="TinyBrains diagrams"><!-- TinyBrains logo. Derived from "Ai Brain" by Rizqi Auliya from Noun Project (https://thenounproject.com/icon/ai-brain-7276116/), licensed under CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). --><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="circuit-title circuit-desc">
+  <title id="circuit-title">TinyBrains</title>
+  <desc id="circuit-desc">A brain seen from the front, drawn as circuit traces. Five mirrored pairs of traces, each ending in a node, carry the brain-region hues; the silhouette and the central fissure are drawn in the text colour.</desc>
+  <path fill="var(--ink)" d="m76.387 68.652c0-2.715-2.203-4.918-4.918-4.918s-4.918 2.203-4.918 4.918c0 2.07 1.285 3.848 3.102 4.563v12.703l-4.621 4.645h-5.266l-7.961-7.98v-66.715l6.43-6.43h7.184l11.43 11.43c0.703 0.703 1.848 0.703 2.563 0 0.703-0.703 0.703-1.848 0-2.562l-11.961-11.957c-0.336-0.336-0.797-0.531-1.277-0.531h-8.684c-0.48 0-0.937 0.195-1.277 0.531l-6.211 6.215-6.215-6.215c-0.336-0.336-0.797-0.531-1.277-0.531h-8.684c-0.48 0-0.937 0.195-1.277 0.531l-11.953 11.957c-0.703 0.703-0.703 1.848 0 2.563 0.703 0.703 1.848 0.703 2.563 0l11.43-11.43h7.184l6.43 6.43v66.723l-7.961 7.981h-5.266l-4.621-4.644-0.004-12.711c1.816-0.723 3.102-2.488 3.102-4.562 0-2.715-2.203-4.918-4.918-4.918s-4.918 2.203-4.918 4.918c0 2.07 1.285 3.848 3.102 4.563v13.461c0 0.48 0.195 0.938 0.531 1.277l5.684 5.703c0.336 0.336 0.797 0.531 1.285 0.531h6.766c0.48 0 0.938-0.195 1.285-0.531l7.746-7.754 7.746 7.754c0.336 0.336 0.797 0.531 1.285 0.531h6.766c0.48 0 0.938-0.195 1.285-0.531l5.684-5.703c0.336-0.336 0.531-0.797 0.531-1.277l-0.004-13.461c1.789-0.727 3.082-2.492 3.082-4.562zm-47.855-1.297c0.703 0 1.297 0.594 1.297 1.297s-0.594 1.297-1.297 1.297-1.297-0.594-1.297-1.297 0.594-1.297 1.297-1.297zm42.938 0c0.703 0 1.297 0.594 1.297 1.297s-0.594 1.297-1.297 1.297-1.297-0.594-1.297-1.297 0.594-1.297 1.297-1.297z"/><!-- silhouette and central fissure -->
+  <path fill="var(--frontal)" d="m34.672 37.348c-0.703 0.703-0.703 1.856 0.012 2.563 0.355 0.348 0.816 0.531 1.277 0.531 0.461 0 0.93-0.172 1.285-0.531l4.551-4.57c0.336-0.336 0.531-0.797 0.531-1.277v-6.367c1.816-0.723 3.102-2.488 3.102-4.562 0-2.715-2.203-4.918-4.918-4.918-2.695 0-4.898 2.203-4.898 4.918 0 2.07 1.277 3.836 3.082 4.563v5.621zm5.84-15.531c0.715 0 1.297 0.582 1.297 1.297 0 0.715-0.582 1.297-1.297 1.297-0.695 0-1.277-0.594-1.277-1.297 0-0.707 0.582-1.297 1.277-1.297z"/><!-- left  inner upper -->
+  <path fill="var(--frontal)" d="m61.297 33.305v-5.621c1.805-0.723 3.082-2.488 3.082-4.562 0-2.715-2.195-4.918-4.898-4.918-2.715 0-4.918 2.203-4.918 4.918 0 2.07 1.285 3.848 3.102 4.563v6.367c0 0.48 0.195 0.938 0.531 1.277l4.551 4.57c0.355 0.355 0.816 0.531 1.285 0.531 0.461 0 0.918-0.172 1.277-0.531 0.703-0.703 0.715-1.848 0.012-2.562zm-1.809-11.488c0.695 0 1.277 0.594 1.277 1.297s-0.582 1.297-1.277 1.297c-0.715 0-1.297-0.582-1.297-1.297 0.004-0.715 0.586-1.297 1.297-1.297z"/><!-- right inner upper -->
+  <path fill="var(--parietal)" d="m13.512 58.336c0.703-0.703 0.703-1.848 0-2.562l-2.703-2.703-0.004-19.867 6.133-6.133h6.07c0.723 1.816 2.488 3.102 4.563 3.102 2.715 0 4.918-2.203 4.918-4.918s-2.203-4.918-4.918-4.918c-2.07 0-3.848 1.285-4.562 3.102h-6.816c-0.48 0-0.937 0.195-1.277 0.531l-7.195 7.195c-0.336 0.336-0.531 0.797-0.531 1.277v21.367c0 0.48 0.195 0.938 0.531 1.277l3.234 3.234c0.355 0.355 0.816 0.531 1.277 0.531 0.465-0.004 0.934-0.168 1.281-0.516zm14.059-34.367c0.715 0 1.297 0.582 1.297 1.297 0 0.703-0.594 1.297-1.297 1.297-0.703 0-1.297-0.594-1.297-1.297 0.004-0.715 0.582-1.297 1.297-1.297z"/><!-- left  outer upper -->
+  <path fill="var(--parietal)" d="m92.285 31.172-7.195-7.195c-0.336-0.336-0.797-0.531-1.277-0.531h-6.816c-0.723-1.816-2.488-3.102-4.562-3.102-2.715 0-4.918 2.203-4.918 4.918 0 2.715 2.203 4.918 4.918 4.918 2.07 0 3.848-1.285 4.563-3.102h6.07l6.133 6.133v19.867l-2.703 2.703c-0.703 0.703-0.703 1.848 0 2.563 0.355 0.355 0.816 0.531 1.277 0.531 0.461 0 0.93-0.172 1.277-0.531l3.234-3.242c0.336-0.336 0.531-0.797 0.531-1.277v-21.363c-0.012-0.48-0.195-0.941-0.531-1.289zm-19.855-4.609c-0.703 0-1.297-0.594-1.297-1.297 0-0.715 0.582-1.297 1.297-1.297 0.715 0 1.297 0.582 1.297 1.297-0.004 0.703-0.594 1.297-1.297 1.297z"/><!-- right outer upper -->
+  <path fill="var(--temporal)" d="m31.184 48.145h-4.461l-1.898-1.879 0.004-13.215c0-1-0.805-1.805-1.805-1.805s-1.805 0.805-1.805 1.805v13.961c0 0.48 0.195 0.949 0.531 1.285l2.961 2.938c0.336 0.336 0.797 0.52 1.277 0.52h5.203c0.723 1.816 2.488 3.102 4.563 3.102 2.715 0 4.918-2.203 4.918-4.918 0-2.695-2.203-4.898-4.918-4.898-2.082 0.012-3.848 1.297-4.57 3.106zm4.563 0.527c0.715 0 1.297 0.57 1.297 1.277 0 0.723-0.57 1.297-1.297 1.297-0.715 0-1.297-0.582-1.297-1.297 0-0.695 0.59-1.277 1.297-1.277z"/><!-- left  inner middle -->
+  <path fill="var(--temporal)" d="m68.828 51.754h5.203c0.48 0 0.938-0.195 1.277-0.531l2.938-2.937c0.336-0.336 0.531-0.797 0.531-1.277v-13.957c0-1-0.805-1.805-1.805-1.805s-1.805 0.805-1.805 1.805v13.203l-1.879 1.879h-4.449c-0.723-1.805-2.488-3.082-4.562-3.082-2.715 0-4.918 2.195-4.918 4.898 0 2.715 2.203 4.918 4.918 4.918 2.051-0.012 3.824-1.297 4.551-3.113zm-4.574-0.508c-0.723 0-1.297-0.57-1.297-1.297 0-0.703 0.582-1.277 1.297-1.277 0.703 0 1.297 0.582 1.297 1.277 0 0.715-0.582 1.297-1.297 1.297z"/><!-- right inner middle -->
+  <path fill="var(--occipital)" d="m23.469 76.266h-2.785l-5.621-5.602v-6.969l2.703-2.703c0.602 0.254 1.254 0.406 1.949 0.406 2.715 0 4.918-2.203 4.918-4.918 0-2.715-2.203-4.918-4.918-4.918s-4.918 2.203-4.918 4.918c0 0.695 0.145 1.356 0.406 1.949l-3.234 3.234c-0.336 0.336-0.531 0.797-0.531 1.277v8.469c0 0.48 0.195 0.938 0.531 1.285l6.684 6.664c0.336 0.336 0.797 0.531 1.277 0.531l3.539-0.004c1 0 1.805-0.805 1.805-1.805 0.004-1-0.805-1.816-1.805-1.816zm-3.746-21.082c0.715 0 1.297 0.582 1.297 1.297 0 0.715-0.582 1.297-1.297 1.297-0.348 0-0.672-0.152-0.906-0.387s-0.387-0.562-0.387-0.906c0-0.707 0.59-1.301 1.293-1.301z"/><!-- left  outer lower -->
+  <path fill="var(--occipital)" d="m84.785 58.43c0.254-0.602 0.406-1.254 0.406-1.949 0-2.715-2.203-4.918-4.918-4.918-2.715 0-4.918 2.203-4.918 4.918 0 2.715 2.203 4.918 4.918 4.918 0.695 0 1.356-0.145 1.949-0.406l2.703 2.703v6.969l-5.621 5.602h-2.773c-1 0-1.805 0.805-1.805 1.805s0.805 1.805 1.805 1.805h3.531c0.48 0 0.938-0.195 1.277-0.531l6.684-6.664c0.336-0.336 0.531-0.797 0.531-1.285v-8.469c0-0.48-0.195-0.937-0.531-1.277zm-5.805-1.949c0-0.715 0.582-1.297 1.297-1.297 0.703 0 1.297 0.594 1.297 1.297 0 0.348-0.152 0.672-0.387 0.906s-0.562 0.387-0.906 0.387c-0.719 0.004-1.301-0.578-1.301-1.293z"/><!-- right outer lower -->
+  <path fill="var(--cerebellum)" d="m35.613 76.797c0 2.715 2.195 4.918 4.898 4.918 2.715 0 4.918-2.203 4.918-4.918 0-2.07-1.285-3.848-3.102-4.562v-6.367c0-0.48-0.195-0.937-0.531-1.277l-4.551-4.57c-0.703-0.703-1.848-0.715-2.562-0.012-0.703 0.703-0.715 1.848-0.012 2.563l4.031 4.039v5.621c-1.805 0.73-3.09 2.504-3.09 4.566zm4.898 1.305c-0.695 0-1.277-0.594-1.277-1.297 0-0.703 0.582-1.297 1.277-1.297 0.715 0 1.297 0.582 1.297 1.297-0.004 0.707-0.586 1.297-1.297 1.297z"/><!-- left  inner lower -->
+  <path fill="var(--cerebellum)" d="m65.328 62.562c0.703-0.703 0.703-1.855-0.012-2.562-0.703-0.703-1.855-0.703-2.562 0.012l-4.551 4.57c-0.336 0.336-0.531 0.797-0.531 1.277v6.367c-1.816 0.723-3.102 2.488-3.102 4.563 0 2.715 2.203 4.918 4.918 4.918 2.695 0 4.898-2.203 4.898-4.918 0-2.07-1.277-3.836-3.082-4.562v-5.621zm-5.84 15.539c-0.715 0-1.297-0.582-1.297-1.297 0-0.715 0.582-1.297 1.297-1.297 0.695 0 1.277 0.594 1.277 1.297 0 0.707-0.582 1.297-1.277 1.297z"/><!-- right inner lower -->
+</svg>
+<span>tiny<b>brains</b></span></a>
+    <button class="theme" type="button" id="theme" aria-label="Toggle colour theme"></button>
+  </header>
+  <h1>Architecture</h1>
+  <p class="lede">The platform behind tinybrains.dev runs on <strong>Orion</strong>: one central Orion node serves the site and runs the ladder's clocks, every runner is an Orion node of its own, and <strong>Orion UI</strong> operates it all.</p>
+  <ol>
+    <li><a class="card" href="production-runtime.html">
+      <h2>Production Runtime on Orion</h2>
+      <p>The central Orion node, the Orion runners and Orion UI, with every store and edge around them.</p>
+    </a></li>
+    <li><a class="card" href="submission-to-rating.html">
+      <h2>Submission to Rating</h2>
+      <p>One model's path in order: upload, Orion's admission on a runner, a trial match, the rating.</p>
+    </a></li>
+    <li><a class="card" href="model-version-lifecycle.html">
+      <h2>Model Version Lifecycle</h2>
+      <p>The states a submitted version moves through, what moves it, and where it ends.</p>
+    </a></li>
+  </ol>
+  <footer>
+    <p>Drawn with archify from <code>diagrams/src/</code> in Tiny-Brains/devops.</p>
+    <p>Logo derived from “Ai Brain” by Rizqi Auliya, from <a href="https://thenounproject.com/icon/ai-brain-7276116/">The Noun Project</a>, under <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>.</p>
+  </footer>
+</main>
+<script>
+  (function () {
+    var html = document.documentElement, btn = document.getElementById('theme');
+    function label() { btn.textContent = html.getAttribute('data-theme') === 'light' ? 'Light' : 'Dark'; }
+    btn.addEventListener('click', function () {
+      var next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      html.setAttribute('data-theme', next);
+      try { localStorage.setItem('archify-theme', next); } catch (_) {}
+      label();
+    });
+    label();
+  })();
+</script>
+</body>
+</html>

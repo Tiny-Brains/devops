@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Submission to Rating",
+    "output": "diagrams/submission-to-rating.html",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "browser",
+      "type": "external",
+      "label": "Competitor",
+      "sublabel": "browser · Submit page"
+    },
+    {
+      "id": "soma",
+      "type": "backend",
+      "label": "Orion · Soma",
+      "sublabel": "central · /v1 + gate"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "Cloud SQL"
+    },
+    {
+      "id": "clocks",
+      "type": "backend",
+      "label": "Orion clocks",
+      "sublabel": "soma: 5 clocks"
+    },
+    {
+      "id": "r2",
+      "type": "database",
+      "label": "R2",
+      "sublabel": "models · replays"
+    },
+    {
+      "id": "admitter",
+      "type": "backend",
+      "label": "Orion admit",
+      "sublabel": "kalam-admit runner"
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Orion match",
+      "sublabel": "kalam match runner"
+    }
+  ],
+  "segments": [
+    {
+      "from": 172,
+      "to": 296,
+      "label": "Submit"
+    },
+    {
+      "from": 326,
+      "to": 630,
+      "label": "Admit"
+    },
+    {
+      "from": 660,
+      "to": 994,
+      "label": "Trial match"
+    },
+    {
+      "from": 1024,
+      "to": 1148,
+      "label": "Rate + promote"
+    }
+  ],
+  "messages": [
+    {
+      "id": "submit",
+      "from": "browser",
+      "to": "soma",
+      "y": 192,
+      "label": "POST /v1/submissions",
+      "variant": "emphasis",
+      "note": "weights_hash and manifest_hash, sha256 each"
+    },
+    {
+      "id": "insert-version",
+      "from": "soma",
+      "to": "pg",
+      "y": 222,
+      "label": "INSERT · testing"
+    },
+    {
+      "id": "presigned",
+      "from": "soma",
+      "to": "browser",
+      "y": 252,
+      "label": "201 · presigned PUTs",
+      "variant": "return"
+    },
+    {
+      "id": "upload",
+      "from": "browser",
+      "to": "r2",
+      "y": 282,
+      "label": "PUT model.onnx + manifest.json",
+      "variant": "emphasis"
+    },
+    {
+      "id": "admit-claim",
+      "from": "clocks",
+      "to": "pg",
+      "y": 346,
+      "label": "admit: claim batch",
+      "note": "every 20 s, up to 4 testing versions"
+    },
+    {
+      "id": "admit-head",
+      "from": "clocks",
+      "to": "r2",
+      "y": 376,
+      "label": "HEAD · read manifest",
+      "note": "a missing file waits out the 30 min upload window"
+    },
+    {
+      "id": "admit-queue",
+      "from": "clocks",
+      "to": "pg",
+      "y": 406,
+      "label": "INSERT admissions"
+    },
+    {
+      "id": "admit-token",
+      "from": "admitter",
+      "to": "soma",
+      "y": 436,
+      "label": "POST /v1/runner/token",
+      "variant": "security"
+    },
+    {
+      "id": "admit-take",
+      "from": "admitter",
+      "to": "soma",
+      "y": 466,
+      "label": "POST /v1/runner/admissions/claim",
+      "variant": "security"
+    },
+    {
+      "id": "admit-lease",
+      "from": "soma",
+      "to": "admitter",
+      "y": 496,
+      "label": "registration · digest · lease",
+      "variant": "return"
+    },
+    {
+      "id": "admit-fetch",
+      "from": "admitter",
+      "to": "r2",
+      "y": 526,
+      "label": "GET model by digest",
+      "note": "its own Orion registers, admits and probes the model, then deletes it"
+    },
+    {
+      "id": "admit-report",
+      "from": "admitter",
+      "to": "soma",
+      "y": 556,
+      "label": "POST admissions/{id}/report",
+      "note": "facts only: Orion's admission record, stats and probe"
+    },
+    {
+      "id": "admit-store",
+      "from": "soma",
+      "to": "pg",
+      "y": 586,
+      "label": "store report"
+    },
+    {
+      "id": "admit-judge",
+      "from": "clocks",
+      "to": "pg",
+      "y": 616,
+      "label": "judge → verified",
+      "variant": "emphasis",
+      "note": "or rejected with a reason code, or requeued (3 attempts)"
+    },
+    {
+      "id": "pair",
+      "from": "clocks",
+      "to": "pg",
+      "y": 680,
+      "label": "pair: INSERT trial",
+      "note": "every 15 s: matches + match_seats against active baselines"
+    },
+    {
+      "id": "roster",
+      "from": "runner",
+      "to": "soma",
+      "y": 710,
+      "label": "GET /v1/runner/roster"
+    },
+    {
+      "id": "roster-list",
+      "from": "soma",
+      "to": "runner",
+      "y": 740,
+      "label": "versions that have seats",
+      "variant": "return"
+    },
+    {
+      "id": "runner-fetch",
+      "from": "runner",
+      "to": "r2",
+      "y": 770,
+      "label": "GET model by digest",
+      "note": "its own Orion registers and activates the version"
+    },
+    {
+      "id": "claim",
+      "from": "runner",
+      "to": "soma",
+      "y": 800,
+      "label": "POST /v1/runner/claim",
+      "variant": "security"
+    },
+    {
+      "id": "claim-row",
+      "from": "soma",
+      "to": "runner",
+      "y": 830,
+      "label": "match · board · rules · replay URL",
+      "variant": "return"
+    },
+    {
+      "id": "start",
+      "from": "runner",
+      "to": "soma",
+      "y": 860,
+      "label": "POST matches/{id}/start"
+    },
+    {
+      "id": "renew",
+      "from": "runner",
+      "to": "soma",
+      "y": 890,
+      "label": "POST renew, every ⅓ lease",
+      "variant": "dashed",
+      "note": "tb.ants worldgen, observe, model_infer per seat, step"
+    },
+    {
+      "id": "replay",
+      "from": "runner",
+      "to": "r2",
+      "y": 920,
+      "label": "PUT replay",
+      "variant": "emphasis"
+    },
+    {
+      "id": "finish",
+      "from": "runner",
+      "to": "soma",
+      "y": 950,
+      "label": "POST matches/{id}/finish",
+      "variant": "emphasis",
+      "note": "result per seat, replay_key, engine_digest"
+    },
+    {
+      "id": "finished",
+      "from": "soma",
+      "to": "pg",
+      "y": 980,
+      "label": "finished · seat ranks"
+    },
+    {
+      "id": "rate",
+      "from": "clocks",
+      "to": "pg",
+      "y": 1044,
+      "label": "count: rate the match",
+      "note": "every 10 s: TrueSkill fold into ratings"
+    },
+    {
+      "id": "promote",
+      "from": "clocks",
+      "to": "pg",
+      "y": 1074,
+      "label": "verified → active",
+      "variant": "emphasis",
+      "note": "the entry's previous active version becomes superseded"
+    },
+    {
+      "id": "notifications",
+      "from": "browser",
+      "to": "soma",
+      "y": 1104,
+      "label": "GET notifications",
+      "variant": "dashed"
+    },
+    {
+      "id": "on-ladder",
+      "from": "soma",
+      "to": "browser",
+      "y": 1134,
+      "label": "on the ladder",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "soma",
+      "from": 187,
+      "to": 257,
+      "type": "backend"
+    },
+    {
+      "participant": "clocks",
+      "from": 341,
+      "to": 411,
+      "type": "backend"
+    },
+    {
+      "participant": "admitter",
+      "from": 431,
+      "to": 561,
+      "type": "backend"
+    },
+    {
+      "participant": "clocks",
+      "from": 610,
+      "to": 622,
+      "type": "backend"
+    },
+    {
+      "participant": "clocks",
+      "from": 674,
+      "to": 686,
+      "type": "backend"
+    },
+    {
+      "participant": "runner",
+      "from": 705,
+      "to": 955,
+      "type": "backend"
+    },
+    {
+      "participant": "clocks",
+      "from": 1039,
+      "to": 1079,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Orion on both sides",
+      "items": [
+        "The API, the runner gate and the clocks are one central Orion node running the soma package",
+        "Each runner is its own Orion node: it admits a model with Orion's own admission, then probes it",
+        "A match is an Orion workflow on the runner: tb-ants worldgen, observe and step, and model_infer per seat"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "A clock tick between steps",
+      "items": [
+        "admit every 20 s, pair 15 s, count 10 s, reap 5 s, withdraw every minute",
+        "The roster lists only versions that already have seats, so a new version reaches a runner after pairing",
+        "A runner that has not registered a seat's model releases the claim, and the match is claimed again later"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Fenced, not trusted",
+      "items": [
+        "Every gate write is fenced on the claim token and its lease",
+        "Reap returns a lapsed lease to pending; the third lapse fails the match",
+        "An admission gets 3 attempts, then PROBE_TOO_SLOW or TIMED_OUT"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Who decides",
+      "items": [
+        "Kalam reports facts; Soma's clocks decide admission, pairing, rating and promotion",
+        "Soma runs no model and never parses the ONNX",
+        "Runners reach the gate through Caddy and web, like a browser"
+      ]
+    }
+  ]
+}

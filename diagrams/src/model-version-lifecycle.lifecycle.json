@@ -1,0 +1,213 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Model Version Lifecycle",
+    "output": "diagrams/model-version-lifecycle.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Ladder path"
+    },
+    {
+      "id": "retry",
+      "label": "Retries"
+    },
+    {
+      "id": "baseline",
+      "label": "Baselines"
+    },
+    {
+      "id": "terminal",
+      "label": "Ends"
+    }
+  ],
+  "states": [
+    {
+      "id": "queued",
+      "type": "start",
+      "label": "Queued",
+      "sublabel": "uploaded, waiting",
+      "tag": "testing",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "verifying",
+      "type": "active",
+      "label": "Verifying",
+      "sublabel": "admit clock + runner",
+      "tag": "testing",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "awaiting",
+      "type": "waiting",
+      "label": "Awaiting trial",
+      "sublabel": "vs active baselines",
+      "tag": "verified",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "ladder",
+      "type": "success",
+      "label": "On the ladder",
+      "sublabel": "paired and rated",
+      "tag": "active",
+      "lane": "main",
+      "col": 4,
+      "step": "04"
+    },
+    {
+      "id": "trial_failed",
+      "type": "waiting",
+      "label": "Trial failed",
+      "sublabel": "still verified",
+      "tag": "verified",
+      "lane": "retry",
+      "col": 3
+    },
+    {
+      "id": "disabled",
+      "type": "neutral",
+      "label": "Disabled",
+      "sublabel": "baseline, off the ladder",
+      "tag": "disabled",
+      "lane": "baseline",
+      "col": 3
+    },
+    {
+      "id": "rejected",
+      "type": "failure",
+      "label": "Rejected",
+      "sublabel": "with a reason code",
+      "tag": "rejected",
+      "lane": "terminal",
+      "col": 1
+    },
+    {
+      "id": "superseded",
+      "type": "neutral",
+      "label": "Superseded",
+      "sublabel": "newer version promoted",
+      "tag": "superseded",
+      "lane": "terminal",
+      "col": 4
+    }
+  ],
+  "transitions": [
+    {
+      "from": "queued",
+      "to": "verifying",
+      "label": "claimed",
+      "variant": "emphasis"
+    },
+    {
+      "from": "verifying",
+      "to": "awaiting",
+      "label": "admitted",
+      "variant": "emphasis"
+    },
+    {
+      "from": "awaiting",
+      "to": "ladder",
+      "label": "trial passed",
+      "variant": "emphasis"
+    },
+    {
+      "from": "verifying",
+      "to": "queued",
+      "label": "requeued",
+      "variant": "dashed",
+      "route": "top-channel"
+    },
+    {
+      "from": "verifying",
+      "to": "rejected",
+      "label": "refused",
+      "variant": "security"
+    },
+    {
+      "from": "awaiting",
+      "to": "rejected",
+      "label": "forfeit · closed",
+      "variant": "security"
+    },
+    {
+      "from": "awaiting",
+      "to": "trial_failed",
+      "label": "trial failed",
+      "variant": "dashed"
+    },
+    {
+      "from": "trial_failed",
+      "to": "awaiting",
+      "label": "re-paired"
+    },
+    {
+      "from": "verifying",
+      "to": "disabled",
+      "label": "baseline"
+    },
+    {
+      "from": "disabled",
+      "to": "ladder",
+      "label": "admin enables"
+    },
+    {
+      "from": "ladder",
+      "to": "disabled",
+      "label": "admin disables",
+      "variant": "dashed"
+    },
+    {
+      "from": "ladder",
+      "to": "superseded",
+      "label": "newer promoted"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Admission",
+      "items": [
+        "A submission is one model_versions row; the phases are the ones the site shows, the tag is its status",
+        "Files missing after the 30 min upload window, a bad manifest or a refused stage reject with a reason code",
+        "A slow probe or an unreachable runner requeues and spends one of 3 attempts"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Trial",
+      "items": [
+        "Pair seats an awaiting version against the season's active baselines",
+        "Count promotes it when the trial finishes under the strike ceiling, and supersedes the entry's previous version",
+        "A failed or cancelled trial is paired again up to the trial cap, then rejected UNPLAYABLE"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Endings",
+      "items": [
+        "Rejected and superseded are final; re-entering creates a new version",
+        "Closing a season rejects testing and verified versions as SEASON_CLOSED and freezes active ones into its standings",
+        "Retiring an entry only stops pairing; its version stays active"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Baselines",
+      "items": [
+        "An admin uploads them; they are admitted like any submission and land disabled",
+        "An admin switches them on and off until the season closes"
+      ]
+    }
+  ]
+}

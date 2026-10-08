@@ -1,0 +1,450 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Production Runtime on Orion",
+    "output": "diagrams/production-runtime.html",
+    "quality_profile": "showcase",
+    "engineering_profile": "deployment-ownership"
+  },
+  "components": [
+    {
+      "id": "r2",
+      "type": "database",
+      "label": "Cloudflare R2",
+      "sublabel": "models · replays",
+      "tag": "Cloudflare",
+      "pos": [
+        40,
+        190
+      ],
+      "size": [
+        140,
+        370
+      ]
+    },
+    {
+      "id": "browser",
+      "type": "external",
+      "label": "Browser",
+      "sublabel": "competitors · spectators",
+      "pos": [
+        315,
+        212
+      ],
+      "size": [
+        165,
+        64
+      ]
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Orion · match runner",
+      "sublabel": "kalam package · tb-ants",
+      "tag": "kalam",
+      "pos": [
+        315,
+        357
+      ],
+      "size": [
+        165,
+        64
+      ]
+    },
+    {
+      "id": "admit",
+      "type": "backend",
+      "label": "Orion · admit runner",
+      "sublabel": "kalam-admit · probes",
+      "tag": "kalam",
+      "pos": [
+        315,
+        502
+      ],
+      "size": [
+        165,
+        64
+      ]
+    },
+    {
+      "id": "caddy",
+      "type": "security",
+      "label": "Caddy",
+      "sublabel": "TLS · HSTS · ACME",
+      "tag": "devops",
+      "pos": [
+        600,
+        330
+      ],
+      "size": [
+        120,
+        90
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "web · nginx",
+      "sublabel": "SPA · book · viewer",
+      "tag": "web",
+      "pos": [
+        800,
+        184
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "console",
+      "type": "frontend",
+      "label": "Orion UI",
+      "sublabel": "operations console · :8443",
+      "tag": "devops · orion-ui",
+      "pos": [
+        800,
+        474
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "monitoring",
+      "type": "backend",
+      "label": "Monitoring",
+      "sublabel": "Grafana · Prometheus · Loki",
+      "tag": "devops",
+      "pos": [
+        800,
+        329
+      ],
+      "size": [
+        175,
+        64
+      ]
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub OAuth",
+      "sublabel": "sign-in · userinfo",
+      "pos": [
+        1075,
+        40
+      ],
+      "size": [
+        165,
+        64
+      ]
+    },
+    {
+      "id": "soma",
+      "type": "backend",
+      "label": "Orion · central node",
+      "sublabel": "soma package · gate · 5 clocks",
+      "tag": "soma on Orion",
+      "pos": [
+        1057.5,
+        250
+      ],
+      "size": [
+        200,
+        250
+      ]
+    },
+    {
+      "id": "cloudsql",
+      "type": "database",
+      "label": "Cloud SQL",
+      "sublabel": "Postgres 16 · private IP",
+      "tag": "GCP",
+      "pos": [
+        1350,
+        212
+      ],
+      "size": [
+        165,
+        64
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis · cluster",
+      "sublabel": "cron singletons",
+      "tag": "devops",
+      "pos": [
+        1350,
+        357
+      ],
+      "size": [
+        165,
+        64
+      ]
+    },
+    {
+      "id": "cache",
+      "type": "database",
+      "label": "Redis · cache",
+      "sublabel": "anonymous reads",
+      "tag": "devops",
+      "pos": [
+        1350,
+        502
+      ],
+      "size": [
+        165,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Cloudflare R2",
+      "wraps": [
+        "r2"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "private · presigned only",
+      "wraps": [
+        "r2"
+      ],
+      "pad": 10
+    },
+    {
+      "kind": "region",
+      "label": "Mac mini · Docker",
+      "wraps": [
+        "runner",
+        "admit"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "GCP us-central1 · project tinybrains",
+      "wraps": [
+        "caddy",
+        "web",
+        "console",
+        "monitoring",
+        "soma",
+        "cloudsql",
+        "redis",
+        "cache"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "private IP only",
+      "wraps": [
+        "cloudsql"
+      ],
+      "pad": 10
+    },
+    {
+      "kind": "security-group",
+      "label": "compose network only",
+      "wraps": [
+        "redis",
+        "cache"
+      ],
+      "pad": 10
+    }
+  ],
+  "connections": [
+    {
+      "id": "browser-caddy",
+      "from": "browser",
+      "to": "caddy",
+      "label": "HTTPS :443",
+      "variant": "emphasis"
+    },
+    {
+      "id": "caddy-web",
+      "from": "caddy",
+      "to": "web",
+      "label": "proxy :80",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-soma",
+      "from": "web",
+      "to": "soma",
+      "label": "/v1 proxy",
+      "variant": "emphasis"
+    },
+    {
+      "id": "soma-cloudsql",
+      "from": "soma",
+      "to": "cloudsql",
+      "label": "SQL · TLS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "browser-r2",
+      "from": "browser",
+      "to": "r2",
+      "label": "presigned PUT/GET"
+    },
+    {
+      "id": "runner-r2",
+      "from": "runner",
+      "to": "r2",
+      "label": "model + replay"
+    },
+    {
+      "id": "admit-r2",
+      "from": "admit",
+      "to": "r2",
+      "label": "GET model"
+    },
+    {
+      "id": "runner-caddy",
+      "from": "runner",
+      "to": "caddy",
+      "label": "HTTPS gate",
+      "variant": "security"
+    },
+    {
+      "id": "admit-caddy",
+      "from": "admit",
+      "to": "caddy",
+      "label": "HTTPS gate",
+      "variant": "security"
+    },
+    {
+      "id": "caddy-console",
+      "from": "caddy",
+      "to": "console",
+      "label": ":8443",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "caddy-monitoring",
+      "from": "caddy",
+      "to": "monitoring",
+      "label": ":3443",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "console-soma",
+      "from": "console",
+      "to": "soma",
+      "label": "admin API",
+      "variant": "emphasis"
+    },
+    {
+      "id": "monitoring-soma",
+      "from": "monitoring",
+      "to": "soma",
+      "label": "scrape · OTLP",
+      "variant": "dashed"
+    },
+    {
+      "id": "soma-redis",
+      "from": "soma",
+      "to": "redis",
+      "label": "singletons"
+    },
+    {
+      "id": "soma-cache",
+      "from": "soma",
+      "to": "cache",
+      "label": "cache"
+    },
+    {
+      "id": "browser-github",
+      "from": "browser",
+      "to": "github",
+      "label": "OAuth consent",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "soma-github",
+      "from": "soma",
+      "to": "github",
+      "label": "code + userinfo"
+    },
+    {
+      "id": "soma-r2",
+      "from": "soma",
+      "to": "r2",
+      "label": "HEAD + manifest",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          1157.5,
+          640
+        ],
+        [
+          110,
+          640
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Orion at the centre",
+      "items": [
+        "Soma and Kalam ship no server code: each is an Orion package of channels, workflows, connectors, SQL and wasm plugins, applied at boot",
+        "The central Orion node serves the site's API and the runner gate, and runs the five clocks as cluster singletons",
+        "Every runner is an Orion node of its own; a match is an Orion workflow calling the tb-ants plugin and model_infer per seat",
+        "Orion UI operates the central node through its admin API: channels, packages, plugins and live metrics"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "One way in",
+      "items": [
+        "Caddy publishes the only ports: :443 for the site, :8443 for the console, :3443 for Grafana",
+        "The console and Grafana let in only a site admin: their gates ask Soma's /v1/admin-check",
+        "Runners call the gate like any browser, at https://tinybrains.dev/v1/runner/*"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Bytes skip the VM",
+      "items": [
+        "The browser PUTs an ONNX model and its manifest straight to R2 on presigned URLs, and GETs replays the same way",
+        "Runners GET models by digest with a read-only token and PUT replays on gate-signed URLs",
+        "Soma runs no model: its admit clock only HEADs the upload and reads the manifest"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "State",
+      "items": [
+        "Cloud SQL holds the platform schema and orion_state; gate routes connect as runner_gate",
+        "Cluster Redis is never evicted; the response cache evicts volatile-lru",
+        "Each runner keeps its Orion state in memory and rebuilds it at boot"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Operations",
+      "items": [
+        "Alloy sends metrics, logs and spans to Prometheus, Loki and Tempo; Grafana alerts post to Discord",
+        "Every image is a release from ghcr.io/tiny-brains; plugins are signed with the deployment's own trust key",
+        "soma-bootstrap runs once before Soma: schema, roles, engine digest and cartridge"
+      ]
+    }
+  ]
+}

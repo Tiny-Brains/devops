@@ -46,6 +46,7 @@ devops/
     lib.sh              which environment, and where its files are
     setup/              init, admin-key, admin-user, trust-keygen, sign-plugins,
                         qa-secrets, qa-db, qa-refresh
+    diagrams/build.mjs  rebuilds diagrams/: archify, then the TinyBrains design system from web
   compose/
     web.yml   web.prod.yml   web.qa.yml
     runner.yml   runner.prod.yml        (prod and QA share this one, under different projects)
@@ -53,6 +54,8 @@ devops/
     orion-ui/                           the console's nginx template
     monitoring.yml  monitoring/         Grafana, Prometheus, Loki, Tempo, Alloy -- opt-in per environment
   examples/             one .env template per compose file
+  diagrams/             the architecture diagrams, published to tiny-brains.github.io/devops/ by
+                        .github/workflows/pages.yml; src/ holds what to edit, the pages are generated
   dev/  qa/  prod/      each: web/.env, kalam/.env, and the keys that environment signs with
 ```
 

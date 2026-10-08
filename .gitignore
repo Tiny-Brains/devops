@@ -5,7 +5,8 @@
 # history, which you cannot.
 #
 # WHAT IS TRACKED: the tooling -- tb, scripts/, compose/, examples/ and this README. Those describe
-# how an environment is run.
+# how an environment is run. And the architecture diagrams: diagrams/ (the pages and their sources,
+# not archify's receipts) and the workflow that publishes them.
 # WHAT IS NOT: dev/, qa/ and prod/ -- the environments themselves. Their .env files and keys are
 # per-machine, and `devops/README.md` says the machine that runs an environment owns its copy.
 #
@@ -26,6 +27,9 @@
 !scripts/**
 !compose/**
 !examples/**
+!diagrams/*.html
+!diagrams/src/*.json
+!.github/workflows/*.yml
 
 # 4. AND THEN DENIED AGAIN, whatever any rule above says. Last match wins in git, so these are the
 #    backstop: a future `!dev/**` added in haste still cannot reach a secret through them.
