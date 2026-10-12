@@ -146,8 +146,8 @@ the release's migration over them here is the rehearsal for running it on produc
 
 **Opt-in, per environment.** An environment whose `web/.env` carries the line `TB_MONITORING=1` gets
 `compose/monitoring.yml` layered over its site stack by `tb`. It adds Prometheus (15 days or 1 GB),
-Loki (72 h), Tempo (24 h), one Alloy collecting all of it, and Grafana with four dashboards
-(Overview, Soma, Host and containers, Logs) and alert rules that post to one Discord channel, each
+Loki (72 h), Tempo (24 h), one Alloy collecting all of it, and Grafana with five dashboards
+(Overview, Soma, Host and containers, Cloud SQL, Logs) and alert rules that post to one Discord channel, each
 message tagged with `GRAFANA_ENV`. Every container has a hard memory limit sized for an e2-small;
 together they use about 650 MB.
 
@@ -174,6 +174,7 @@ Turning it on, on the environment's machine:
 ```sh
 # <env>/web/.env:  TB_MONITORING=1, GRAFANA_ENV=<env>, GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 24),
 #                  GRAFANA_DISCORD_WEBHOOK_URL=<the channel's webhook>, ORION_RUST_LOG=info,
+#                  CLOUDSQL_INSTANCE=<project>:<instance> (tinybrains:tinybrains-pg, tinybrains:tinybrains-qa-pg),
 #                  LOG_MAX_SIZE=20m, LOG_MAX_FILE=5, and the tracing lines above if not the minimum
 cp compose/caddy/conf.d/grafana.caddy.example compose/caddy/conf.d/grafana.caddy
 ./tb <env> web --profile console up -d     # recreates soma, caddy and the rest once; starts monitoring
@@ -183,6 +184,22 @@ and open tcp:3443 to that VM alone, with a firewall rule on a tag only it carrie
 (`tinybrains-qa-grafana`, `tinybrains-prod-grafana`) -- never `tinybrains-web`, which both VMs carry.
 Turning it off is the reverse: drop `TB_MONITORING=1` and `./tb <env> web --profile console up -d
 --remove-orphans`.
+
+**Cloud SQL is read from Cloud Monitoring, as the VM's own service account.** Alloy collects the
+instance's CPU, memory, swap, disk and connections into Prometheus, filtered to `CLOUDSQL_INSTANCE`
+(QA's and production's instances share one project, and the alert rules name no instance), and the
+Cloud SQL dashboard reads its rates and per-statement latency (Query Insights) through Grafana's
+Cloud Monitoring datasource. Both need the VM's service account to hold `roles/monitoring.viewer` (or a
+role containing it) under the `cloud-platform` scope. Both VMs carry that scope; production's default
+compute account has `roles/editor`, and QA's `tinybrains-qa-vm` holds only `roles/cloudsql.admin`
+until it is granted:
+
+```sh
+gcloud projects add-iam-policy-binding tinybrains \
+  --member serviceAccount:tinybrains-qa-vm@tinybrains.iam.gserviceaccount.com --role roles/monitoring.viewer
+```
+
+Without it the stack still runs; the Cloud SQL panels are empty and *Cloud SQL not reporting* fires.
 
 ## Invariants
 

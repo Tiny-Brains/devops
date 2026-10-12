@@ -44,3 +44,17 @@ datasources:
         datasourceUid: prometheus
       nodeGraph:
         enabled: true
+
+  # CLOUD SQL'S OWN TELEMETRY, as the VM's service account (GCE metadata: no key file anywhere). Only
+  # the Cloud SQL dashboard reads it: Query Insights' per-statement latency, labelled by the SQL text
+  # (no label to put in Prometheus), and the DELTA rates Alloy deliberately does not collect (swap
+  # paging, disk operations, transactions). The gauges -- CPU, memory, swap, connections -- come
+  # through Alloy into Prometheus, filtered to this environment's instance, and are what the alert
+  # rules read. The panels take the instance and project from those series, so nothing here names
+  # an environment; the datasource's own default project is the VM's, from the metadata server.
+  - name: Cloud Monitoring
+    uid: cloudmonitoring
+    type: stackdriver
+    access: proxy
+    jsonData:
+      authenticationType: gce

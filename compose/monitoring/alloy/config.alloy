@@ -199,6 +199,49 @@ prometheus.scrape "probes" {
   forward_to = [prometheus.remote_write.default.receiver]
 }
 
+// CLOUD SQL: the instance's CPU, memory, swap, disk and connections, which exist only in Google Cloud
+// Monitoring -- a managed instance runs nothing this collector can scrape. Read with the VM's own
+// identity through the metadata server (it needs `roles/monitoring.viewer` under the cloud-platform
+// scope), filtered to THIS environment's instance by CLOUDSQL_INSTANCE (`<project>:<instance>`),
+// because QA's and production's instances live in one project. Into Prometheus rather than only
+// Grafana's Cloud Monitoring datasource, so the alert rules -- which are not env-interpolated -- name
+// no instance, and an instance that stops reporting is an absence a rule can see.
+//
+// GAUGES ONLY, AND STAMPED WITH THE SCRAPE TIME (honor_timestamps = false). The exporter keeps
+// Cloud Monitoring's own point times, and turns a DELTA metric into a counter it accumulates -- and
+// it re-sends an accumulated value under a point time it has already sent. Prometheus' remote-write
+// receiver answers that duplicate with a 400 for the WHOLE batch, and the batch carries every other
+// job's samples too: Soma's, the host's, the containers'. Scrape time makes a duplicate impossible;
+// the cost is that a point lands ~3 minutes after it happened (Cloud SQL's ingest delay is 165 s).
+// The DELTA metrics (swap paging, disk operations, transactions) are read on the dashboard straight
+// from Cloud Monitoring instead. Each scrape is ~20 Monitoring API calls (a list per prefix, then one
+// per metric type it matches; `up` also matches `uptime`).
+prometheus.exporter.gcp "cloudsql" {
+  project_ids      = [string.split(sys.env("CLOUDSQL_INSTANCE"), ":")[0]]
+  metrics_prefixes = [
+    "cloudsql.googleapis.com/database/up",
+    "cloudsql.googleapis.com/database/cpu/utilization",
+    "cloudsql.googleapis.com/database/cpu/reserved_cores",
+    "cloudsql.googleapis.com/database/memory/total_usage",
+    "cloudsql.googleapis.com/database/memory/quota",
+    "cloudsql.googleapis.com/database/memory/utilization",
+    "cloudsql.googleapis.com/database/swap/bytes_used",
+    "cloudsql.googleapis.com/database/disk/utilization",
+    "cloudsql.googleapis.com/database/postgresql/num_backends",
+  ]
+  extra_filters    = [string.format("cloudsql.googleapis.com/database:resource.labels.database_id=%q", sys.env("CLOUDSQL_INSTANCE"))]
+  request_interval = "5m"
+}
+
+prometheus.scrape "cloudsql" {
+  targets          = prometheus.exporter.gcp.cloudsql.targets
+  job_name         = "cloudsql"
+  scrape_interval  = "60s"
+  scrape_timeout   = "45s"
+  honor_timestamps = false
+  forward_to       = [prometheus.remote_write.default.receiver]
+}
+
 // THE MONITORING STACK ITSELF: is Loki ingesting, is Tempo receiving spans.
 prometheus.scrape "monitoring" {
   targets = [

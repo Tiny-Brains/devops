@@ -3,7 +3,8 @@
 # connector or an image: every Soma change below is an `ORION_*` setting.
 #
 #   metrics   Alloy scrapes Soma's own listener, both Redis, the host, every container and two
-#             probes, and remote-writes them to Prometheus.
+#             probes, reads this environment's Cloud SQL instance from Cloud Monitoring, and
+#             remote-writes them all to Prometheus.
 #   logs      Alloy tails every container through the Docker API into Loki. The json-file rotation
 #             in web.prod.yml stays as it is; Loki is the history, not the disk.
 #   traces    Soma exports OpenTelemetry spans to Tempo, and trace rows to its state database --
@@ -152,8 +153,13 @@ services:
     # The host's cgroup tree, not a private one: cAdvisor reads every container's from it.
     cgroup: host
     environment:
-      GOMEMLIMIT: 180MiB
+      # 200, not 180, and a 256m limit below: the Cloud SQL exporter (the Google client and its
+      # connection) measured ~8 MiB over an otherwise idle Alloy.
+      GOMEMLIMIT: 200MiB
       SITE_HOST: ${SITE_HOST}
+      # This environment's Cloud SQL instance, as `<project>:<instance>` (its database_id in Cloud
+      # Monitoring). The VM's service account reads its metrics: see README, Monitoring.
+      CLOUDSQL_INSTANCE: ${CLOUDSQL_INSTANCE:?this environment's Cloud SQL instance as <project>:<instance>}
     volumes:
       - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - alloy-data:/var/lib/alloy/data
@@ -168,7 +174,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${ALLOY_MEMORY:-224m}
+          memory: ${ALLOY_MEMORY:-256m}
 
   # ---- the view ---------------------------------------------------------------------------------
   # NO LOGIN OF ITS OWN: AUTH PROXY, BEHIND A GATE. grafana-gate lets through only a signed-in site
@@ -201,9 +207,9 @@ services:
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_LOG_LEVEL: warn
       # EVERY DATASOURCE PLUGIN IS ITS OWN PROCESS, ~30 MB each, started whether or not a datasource
-      # uses it. These are the ones nothing here does; Prometheus, Loki and Tempo stay. Add
-      # `stackdriver` back the day Cloud SQL's metrics are wired in.
-      GF_PLUGINS_DISABLE_PLUGINS: influxdb,stackdriver,elasticsearch,mysql,mssql,zipkin,grafana-postgresql-datasource,opentsdb,jaeger,grafana-pyroscope-datasource,grafana-pyroscope-app,grafana-advisor-app,grafana-azure-monitor-datasource,graphite,cloudwatch,grafana-testdata-datasource
+      # uses it. These are the ones nothing here does; Prometheus, Loki, Tempo and Cloud Monitoring
+      # (`stackdriver`: the Cloud SQL dashboard's rates and Query Insights panels) stay.
+      GF_PLUGINS_DISABLE_PLUGINS: influxdb,elasticsearch,mysql,mssql,zipkin,grafana-postgresql-datasource,opentsdb,jaeger,grafana-pyroscope-datasource,grafana-pyroscope-app,grafana-advisor-app,grafana-azure-monitor-datasource,graphite,cloudwatch,grafana-testdata-datasource
       # Read by provisioning/alerting/contact-points.yml.
       GRAFANA_DISCORD_WEBHOOK_URL: ${GRAFANA_DISCORD_WEBHOOK_URL:?a Discord channel's webhook URL}
       GRAFANA_ENV: ${GRAFANA_ENV}
@@ -223,7 +229,7 @@ services:
 
   # THE SIGN-IN GATE, the Orion console's own pattern: nginx `auth_request` against Soma's
   # /v1/admin-check with the site's session cookie, the verdict cached 10 s per session. Caddy's
-  # forward_auth would ask Soma -- and a db-f1-micro -- on every one of Grafana's many requests.
+  # forward_auth would ask Soma -- and a small Cloud SQL -- on every one of Grafana's many requests.
   grafana-gate:
     image: nginx:1.30.5-alpine
     environment:

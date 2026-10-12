@@ -529,3 +529,210 @@ groups:
           summary: "Alloy is down: no new metrics or logs are being collected, so every other alert is blind."
         labels:
           severity: "critical"
+  - orgId: 1
+    name: "Cloud SQL"
+    folder: "TinyBrains"
+    interval: "1m"
+    # READ FROM ALLOY'S CLOUD MONITORING EXPORTER (config.alloy), which collects THIS environment's
+    # instance alone -- so no rule names one. A point lands ~3 minutes after it happened (Cloud SQL's
+    # 165 s ingest delay plus a 60 s scrape), so every pending period starts that much late; read
+    # through last_over_time(...[5m]) so one slow scrape is not a gap -- except for an AGE, which
+    # takes timestamp() of the bare series inside a subquery: timestamp(last_over_time(...)) is the
+    # evaluation time, always now, and would never fire. The exporter keeps returning a
+    # silent instance's last point for 5 minutes (its request window), then the series ends: 600 s
+    # of absence is ~15 minutes without a word from the instance. The CPU rule cannot fire on a
+    # shared-core tier, whose utilization flattens at its share far below 0.8; swap and
+    # not-reporting are what catch that tier running out.
+    rules:
+      - uid: "cloudsql-not-reporting"
+        title: "Cloud SQL not reporting"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "time() - max(max_over_time(timestamp(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up)[2h:1m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 600
+        for: "2m"
+        noDataState: "Alerting"
+        execErrState: "Error"
+        annotations:
+          summary: "Cloud SQL has sent no metrics for 15 minutes. Either the instance has stopped reporting -- a hung instance's own agent stops with it -- or Alloy cannot read Cloud Monitoring (stackdriver_monitoring_last_scrape_error). Try a connection before believing the console's RUNNABLE."
+        labels:
+          severity: "critical"
+      - uid: "cloudsql-down"
+        title: "Cloud SQL down"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "min(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up[5m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "lt"
+                    params:
+                      - 1
+        for: "3m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Cloud SQL reports itself down."
+        labels:
+          severity: "critical"
+      - uid: "cloudsql-swap"
+        title: "Cloud SQL swapping"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_swap_bytes_used[5m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 52428800
+        for: "15m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Cloud SQL has had over 50 MiB in swap for 15 minutes: its working set no longer fits in memory, and every query slows with it. The Cloud SQL dashboard's Swap paging panel shows how hard."
+        labels:
+          severity: "warning"
+      - uid: "cloudsql-memory"
+        title: "Cloud SQL memory high"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_memory_utilization[5m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0.9
+        for: "15m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Cloud SQL has used over 90% of its memory for 15 minutes."
+        labels:
+          severity: "warning"
+      - uid: "cloudsql-cpu"
+        title: "Cloud SQL CPU high"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_cpu_utilization[5m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 0.8
+        for: "15m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Cloud SQL's CPU has been over 80% of its reserved cores for 15 minutes."
+        labels:
+          severity: "warning"
+      - uid: "cloudsql-connections"
+        title: "Cloud SQL connections high"
+        condition: "B"
+        data:
+          - refId: "A"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: "prometheus"
+            model:
+              refId: "A"
+              expr: "sum(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_postgresql_num_backends[5m]))"
+              instant: true
+              range: false
+          - refId: "B"
+            datasourceUid: "__expr__"
+            model:
+              refId: "B"
+              type: "threshold"
+              expression: "A"
+              conditions:
+                - evaluator:
+                    type: "gt"
+                    params:
+                      - 45
+        for: "10m"
+        noDataState: "OK"
+        execErrState: "Error"
+        annotations:
+          summary: "Over 45 of Cloud SQL's 60 connections have been open for 10 minutes."
+        labels:
+          severity: "warning"

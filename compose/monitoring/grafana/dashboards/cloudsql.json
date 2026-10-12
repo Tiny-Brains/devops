@@ -1,0 +1,1403 @@
+{
+  "uid": "tb-cloudsql",
+  "title": "Cloud SQL",
+  "description": "This environment's Cloud SQL instance: its gauges (CPU, memory, swap, connections) through Alloy into Prometheus, which the alerts read; its rates and per-statement latency straight from Cloud Monitoring and Query Insights.",
+  "tags": [
+    "tinybrains"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Instance",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "title": "Up",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up{database_id=\"$instance\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Up",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "Cloud SQL's own up gauge. It reads Up for as long as the instance reports at all, so read it with Telemetry age beside it."
+    },
+    {
+      "id": 3,
+      "title": "Last reported",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "time() - max(max_over_time(timestamp(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up{database_id=\"$instance\"})[2h:1m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "Seconds since Alloy last read a Cloud SQL point. Under a minute is normal. A hung instance's own agent stops with it: its last point is still read for about 5 minutes (the exporter's window), and then this climbs."
+    },
+    {
+      "id": 4,
+      "title": "Reserved cores",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_cpu_reserved_cores{database_id=\"$instance\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "The tier's vCPUs. Shared-core tiers (db-f1-micro, db-g1-small) report 1 here and are throttled to a fraction of it."
+    },
+    {
+      "id": 5,
+      "title": "Memory",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_memory_quota{database_id=\"$instance\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Swap used",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_swap_bytes_used{database_id=\"$instance\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1048576
+              },
+              {
+                "color": "red",
+                "value": 52428800
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "Should be zero. Any swap means the working set no longer fits in memory, and it is how a tier that is too small runs out: queries slow by an order of magnitude long before anything fails."
+    },
+    {
+      "id": 7,
+      "title": "Connections",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(last_over_time(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_postgresql_num_backends{database_id=\"$instance\"}[5m]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "Every backend on the instance, all databases, against max_connections = 60 (the instance flag)."
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "CPU and memory",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "title": "CPU",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "stackdriver_cloudsql_database_cloudsql_googleapis_com_database_cpu_utilization{database_id=\"$instance\"}",
+          "legendFormat": "busy"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Of the reserved cores. On a shared-core tier the line goes FLAT at the tier's share under load instead of reaching 100%: a flat top is the throttle."
+    },
+    {
+      "id": 10,
+      "title": "Memory",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 6,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "stackdriver_cloudsql_database_cloudsql_googleapis_com_database_memory_total_usage{database_id=\"$instance\"}",
+          "legendFormat": "used"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "stackdriver_cloudsql_database_cloudsql_googleapis_com_database_memory_quota{database_id=\"$instance\"}",
+          "legendFormat": "quota"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "stackdriver_cloudsql_database_cloudsql_googleapis_com_database_swap_bytes_used{database_id=\"$instance\"}",
+          "legendFormat": "swap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "quota"
+            },
+            "properties": [
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "swap"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Swap paging",
+      "type": "timeseries",
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "cloudmonitoring"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 6,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/swap/pages_swapped_in_count",
+              "AND",
+              "resource.label.database_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_NONE",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "in"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/swap/pages_swapped_out_count",
+              "AND",
+              "resource.label.database_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_NONE",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Pages per second, from Cloud Monitoring. Sustained swap-in is the instance reading its own working set back from disk: every query slows by an order of magnitude while the plans stay the same."
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Connections and work",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "title": "Connections by database",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (database) (stackdriver_cloudsql_database_cloudsql_googleapis_com_database_postgresql_num_backends{database_id=\"$instance\"})",
+          "legendFormat": "{{database}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(60)",
+          "legendFormat": "max_connections"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_connections"
+            },
+            "properties": [
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "max_connections is the instance flag (60), drawn as a constant: change both together."
+    },
+    {
+      "id": 14,
+      "title": "Connections by state",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 15,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (state) (stackdriver_cloudsql_database_cloudsql_googleapis_com_database_postgresql_num_backends_by_state{database_id=\"$instance\"})",
+          "legendFormat": "{{state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Active backends piling up while idle ones stay flat is queries running longer, not more clients."
+    },
+    {
+      "id": 15,
+      "title": "Transactions",
+      "type": "timeseries",
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "cloudmonitoring"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 15,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/postgresql/transaction_count",
+              "AND",
+              "resource.label.database_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [
+              "metric.label.transaction_type"
+            ],
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "{{metric.label.transaction_type}} /s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/postgresql/deadlock_count",
+              "AND",
+              "resource.label.database_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "deadlocks"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deadlocks"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Disk",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "title": "Disk operations",
+      "type": "timeseries",
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "cloudmonitoring"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/disk/read_ops_count",
+              "AND",
+              "resource.label.database_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_NONE",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "reads"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/disk/write_ops_count",
+              "AND",
+              "resource.label.database_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_NONE",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "writes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Reads climbing with no change in traffic is the cache no longer holding the working set (or swap)."
+    },
+    {
+      "id": 18,
+      "title": "Disk used",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "stackdriver_cloudsql_database_cloudsql_googleapis_com_database_disk_utilization{database_id=\"$instance\"}",
+          "legendFormat": "used"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Statements (Query Insights)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "Pair demand statement",
+      "type": "timeseries",
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "cloudmonitoring"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/postgresql/insights/perquery/latencies",
+              "AND",
+              "resource.label.resource_id",
+              "=",
+              "$instance",
+              "AND",
+              "metric.label.querystring",
+              "=~",
+              "(?s).*SELECT id, rules, fill, fleet, engine_digest FROM seasons.*"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_MEAN",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "mean"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/postgresql/insights/perquery/latencies",
+              "AND",
+              "resource.label.resource_id",
+              "=",
+              "$instance",
+              "AND",
+              "metric.label.querystring",
+              "=~",
+              "(?s).*SELECT id, rules, fill, fleet, engine_digest FROM seasons.*"
+            ],
+            "groupBys": [],
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "soma's sql/soma-clock-pair-run-demand.sql, the pair clock's statement every 15 s and the first thing to slow when the instance runs short. Matched on the statement's text (its first CTE, `SELECT id, rules, fill, fleet, engine_digest FROM seasons`), not on Query Insights' query_hash, which changes with every edit of the statement: an empty panel after a soma release means that line itself changed."
+    },
+    {
+      "id": 21,
+      "title": "Database time by user",
+      "type": "timeseries",
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "cloudmonitoring"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/postgresql/insights/aggregate/execution_time",
+              "AND",
+              "resource.label.resource_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [
+              "metric.label.user"
+            ],
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "{{metric.label.user}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs",
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Execution time per second of wall clock, by role: 1,000,000 µs/s is one core busy. soma is the site and the clocks; runner_gate is the runners."
+    },
+    {
+      "id": 22,
+      "title": "Slowest statements",
+      "type": "table",
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "cloudmonitoring"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 11
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "cloudmonitoring"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "$project",
+            "filters": [
+              "metric.type",
+              "=",
+              "cloudsql.googleapis.com/database/postgresql/insights/perquery/latencies",
+              "AND",
+              "resource.label.resource_id",
+              "=",
+              "$instance"
+            ],
+            "groupBys": [
+              "metric.label.query_hash",
+              "metric.label.querystring"
+            ],
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_MEAN",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "preprocessor": "none",
+            "view": "FULL"
+          },
+          "aliasBy": "{{metric.label.query_hash}} {{metric.label.querystring}}"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^(\\S+)\\s+([\\s\\S]{0,140})[\\s\\S]*$",
+            "renamePattern": "$1  $2"
+          }
+        },
+        {
+          "id": "reduce",
+          "options": {
+            "mode": "seriesToRows",
+            "reducers": [
+              "mean",
+              "max"
+            ],
+            "includeTimeField": false
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Mean",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 15
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Field": "query_hash  statement (first 140 characters)",
+              "Mean": "mean",
+              "Max": "max"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs",
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "query_hash  statement (first 140 characters)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.width",
+                "value": 1100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "description": "Mean latency per statement over the dashboard's range, top 15, from Query Insights (text normalised, parameters stripped). The first column starts with the query_hash a panel can filter on."
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up, database_id)",
+          "refId": "instance"
+        },
+        "definition": "label_values(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up, database_id)",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2,
+        "sort": 1,
+        "description": "Only this environment's instance is collected (Alloy's CLOUDSQL_INSTANCE), so there is one."
+      },
+      {
+        "name": "project",
+        "label": "Project",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "hide": 2,
+        "query": {
+          "query": "label_values(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up{database_id=\"$instance\"}, project_id)",
+          "refId": "project"
+        },
+        "definition": "label_values(stackdriver_cloudsql_database_cloudsql_googleapis_com_database_up{database_id=\"$instance\"}, project_id)",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  }
+}
