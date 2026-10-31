@@ -21,6 +21,11 @@
 # GOMEMLIMIT under it, so under pressure a monitoring container is the one that gives way -- never
 # Soma. Retention: metrics 15 days AND 1 GB, logs 72 h, traces 24 h, trace rows in Postgres 6 h.
 
+# THE SAME SLICE AS web.prod.yml's x-aux (anchors do not cross files): these six share its half vCPU
+# with the rest of the stack's non-Soma containers, so a heavy Grafana query cannot starve Soma.
+x-aux: &aux
+  cgroup_parent: ${AUX_SLICE:-tinybrains-aux.slice}
+
 x-logging: &logging
   driver: json-file
   options:
@@ -80,6 +85,7 @@ services:
   # Metrics. Alloy remote-writes everything; Prometheus scrapes only itself and Alloy, so a dead Alloy
   # is an alert rather than a silence. Retention is whichever of time and size is reached first.
   prometheus:
+    <<: *aux
     image: prom/prometheus:v3.15.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -102,6 +108,7 @@ services:
 
   # Logs. Single binary, filesystem, compactor-enforced retention.
   loki:
+    <<: *aux
     image: grafana/loki:3.7.8
     command: ["-config.file=/etc/loki/loki.yml"]
     environment:
@@ -120,6 +127,7 @@ services:
   # Traces. Tempo 3 in single-binary mode, which ingests without Kafka. On `platform` as well, because
   # it is where Soma sends its spans.
   tempo:
+    <<: *aux
     image: grafana/tempo:3.1.0
     command: ["-target=all", "-config.file=/etc/tempo/tempo.yml"]
     environment:
@@ -139,6 +147,7 @@ services:
   # THE ONE AGENT. Root, the Docker socket and the host's /proc, /sys and / -- read-only, but the
   # socket is root on this machine whatever its mount says, which is why Alloy publishes nothing.
   alloy:
+    <<: *aux
     image: grafana/alloy:v1.20.1
     command:
       - run
@@ -183,6 +192,7 @@ services:
   # fixed address alone, it is on `monitoring` alone, and it publishes nothing. (Grafana 13 dropped
   # anonymous access above Viewer, which is why this is a proxy and not an anonymous admin.)
   grafana:
+    <<: *aux
     image: grafana/grafana:13.2.3
     environment:
       # Grafana 13 settles near 230 MiB with its bundled apps and alerting loaded, hence more room
@@ -231,6 +241,7 @@ services:
   # /v1/admin-check with the site's session cookie, the verdict cached 10 s per session. Caddy's
   # forward_auth would ask Soma -- and a small Cloud SQL -- on every one of Grafana's many requests.
   grafana-gate:
+    <<: *aux
     image: nginx:1.30.5-alpine
     environment:
       GATE_SOMA_URL: http://soma:8080

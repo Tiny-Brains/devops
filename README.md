@@ -91,6 +91,12 @@ Production and QA have their own sections in the guides: `examples/web.prod.env.
 `examples/web.qa.env.example` explain every blank, and `scripts/setup/qa-secrets.sh` and
 `qa-db.sh` do the parts that must not be done by hand.
 
+**On a host that runs `web.prod.yml`, `sudo scripts/setup/cpu-slice.sh` once.** Every container but
+Soma's runs in `tinybrains-aux.slice`, and this caps that slice as a whole at half a vCPU (pass
+another quota, e.g. `75%`); Soma itself is limited to `SOMA_CPUS`, 1.5 by default. Without it a
+heavy Grafana query can starve Soma until its database pool times out. A host without the unit runs
+the slice uncapped.
+
 ## QA
 
 **QA is the candidate release running on production's rows, and it owns everything else.** Its own

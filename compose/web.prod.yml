@@ -109,10 +109,20 @@ x-node-sizing: &node-sizing
 x-soma: &soma-image
   image: "${SOMA_IMAGE:?name a release, ghcr.io/tiny-brains/soma:<version>}"
 
+# ONE CPU BUDGET FOR EVERYTHING BUT SOMA. Every other container -- both Redis, the console, the site,
+# the edge, and monitoring.yml's six -- runs inside one systemd slice, and the slice is capped as a
+# whole (CPUQuota, default 50% = half a vCPU), so they share that half between them and the rest of
+# the machine is Soma's. A per-container `cpus:` cannot express a shared total. The slice unit is
+# installed on the host by scripts/setup/cpu-slice.sh; on a machine without it Docker still creates
+# the slice, uncapped. A dash in a slice name is nesting: this is tinybrains.slice/tinybrains-aux.slice.
+x-aux: &aux
+  cgroup_parent: ${AUX_SLICE:-tinybrains-aux.slice}
+
 services:
   # Cluster state: dedup windows, rate limits, the cron singletons' coordination. Never evicted, never
   # persisted -- a restart costs a few windows, and nothing here is a record.
   redis:
+    <<: *aux
     image: redis:7.4-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
     healthcheck:
@@ -131,6 +141,7 @@ services:
   # reads as version 0, which would serve again an entry stored before the first bump. Entries have
   # TTLs, so volatile-lru evicts only them.
   cache:
+    <<: *aux
     image: redis:7.4-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no",
               "--maxmemory", "${CACHE_MAXMEMORY:-256mb}", "--maxmemory-policy", "volatile-lru"]
@@ -241,6 +252,8 @@ services:
       resources:
         limits:
           memory: ${SOMA_MEMORY:-1g}
+          # THE REST OF THE MACHINE: 2 vCPUs less the half the x-aux slice is capped at.
+          cpus: ${SOMA_CPUS:-1.5}
 
   # Orion's operations console, behind the site's GitHub sign-in (compose/orion-ui/default.conf.template
   # says how). OFF UNLESS ASKED FOR: an admin's session opens the whole admin API through it, so it runs
@@ -255,6 +268,7 @@ services:
   # what would break it is a changed response shape, and none changed. Re-check on the next Orion
   # bump.
   orion-ui:
+    <<: *aux
     image: ghcr.io/goplasmatic/orion-ui:${ORION_UI_VERSION:-1.9.1}
     profiles: [console]
     depends_on:
@@ -278,6 +292,7 @@ services:
     networks: [platform]
 
   web:
+    <<: *aux
     image: "${WEB_IMAGE:?name a release, ghcr.io/tiny-brains/web:<version>}"
     depends_on:
       soma:
@@ -288,6 +303,7 @@ services:
 
   # THE EDGE, and the only published ports. compose/caddy/Caddyfile says what it does.
   caddy:
+    <<: *aux
     image: caddy:2.11.4-alpine
     depends_on:
       web:
