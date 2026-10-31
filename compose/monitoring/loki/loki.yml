@@ -38,6 +38,35 @@ limits_config:
   # What Grafana's Logs Drilldown reads: log volume per label, and the patterns below.
   volume_enabled: true
 
+  # QUERIES ARE SIZED FOR TWO SHARED vCPUs, NOT A CLUSTER. Loki's defaults shard one query up to 128
+  # ways and run 32 pieces at once; on an e2-small a single dashboard on auto-refresh queued more
+  # than it could finish and took the box to 94% (and Soma with it). Every container here also sits
+  # in the x-aux CPU slice, which bounds the damage; these keep a query from needing it.
+  # A query runs at most 30 s, then is dropped rather than left running behind a closed tab.
+  query_timeout: 30s
+  # Hourly pieces (the default, stated): what the results cache below stores and reuses.
+  split_queries_by_interval: 1h
+  # At most 2 pieces of one query in flight, each sharded at most 4 ways.
+  max_query_parallelism: 2
+  tsdb_max_query_parallelism: 4
+  # Nothing older than retention exists, so a longer range is only work.
+  max_query_length: 73h
+
+# Two query workers, not four: one per vCPU, and the slice caps them anyway.
+querier:
+  max_concurrent: 2
+
+# CACHE FINISHED HOURS. Off by default, so a dashboard on refresh recomputed its whole range every
+# time; with it, a refresh recomputes only the hour still being written. In memory, sized under the
+# container's 224m limit.
+query_range:
+  cache_results: true
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 32
+
 # Groups similar lines into patterns, which is most of what "analyse the logs" means here.
 pattern_ingester:
   enabled: true
